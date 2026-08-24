@@ -1,6 +1,7 @@
 module alu (
     input  wire        clk,
     input  wire        rst,
+    input  wire        flag_en, // フラグ更新許可
 
     input  wire [15:0] A,
     input  wire [15:0] B,
@@ -10,7 +11,7 @@ module alu (
 
     // フラグ
     // Z : Zero
-    // C : Carry / Borrowなし
+    // C : Carry / Borrowなし / SHRの押し出しbit
     // N : Negative
     output reg         Z,
     output reg         C,
@@ -20,9 +21,8 @@ module alu (
     // 17bit目でCarryを取得するための一時レジスタ
     reg [16:0] temp;
 
-
     //==========================================================
-    // ALU
+    // ALU 演算部（組み合わせ回路）
     //==========================================================
 
     always @(*) begin
@@ -61,7 +61,7 @@ module alu (
 
             // SUB
             // A - B = A + ~B + 1
-            // temp[16] = Borrowなし
+            // temp[16] = Carry (Borrowなし)
             3'b101: begin
                 temp   = {1'b0, A}
                        + {1'b0, ~B}
@@ -75,13 +75,18 @@ module alu (
             3'b110: begin
                 temp   = {1'b0, A}
                        + {1'b0, B}
-                       + C;
+                       + {16'b0, C};
 
                 result = temp[15:0];
             end
 
-            // 未定義命令
-            // 3'b111、および不正な状態
+            // SHR (論理右シフト 1bit)
+            // A[0] を Carry に反映
+            3'b111: begin
+                result = {1'b0, A[15:1]};
+                temp   = {15'b0, A[0], 1'b0}; // temp[1] に A[0] を保持
+            end
+
             default: begin
                 temp   = 17'b0;
                 result = 16'b0;
@@ -90,9 +95,8 @@ module alu (
         endcase
     end
 
-
     //==========================================================
-    // フラグレジスタ
+    // フラグレジスタ更新部
     //==========================================================
 
     always @(posedge clk or posedge rst) begin
@@ -104,29 +108,30 @@ module alu (
             N <= 1'b0;
         end
 
-        else begin
+        else if (flag_en) begin
 
-            // Zero Flag
-            // 演算結果が0なら1
+            // Zero Flag: 演算結果が0なら1
             Z <= (result == 16'b0);
 
-            // Negative Flag
-            // 2の補数表現における符号bit
+            // Negative Flag: 2の補数表現における符号bit
             N <= result[15];
 
             // Carry Flag
             case (funct)
 
-                // ADD
-                // SUB
-                // ADC
+                // ADD, SUB, ADC: temp[16] を反映
                 3'b100,
                 3'b101,
                 3'b110: begin
                     C <= temp[16];
                 end
 
-                // 論理演算ではCを保持
+                // SHR: A[0] を反映
+                3'b111: begin
+                    C <= A[0];
+                end
+
+                // 論理演算（NAND, OR, AND, XOR）ではCを保持
                 default: begin
                     C <= C;
                 end

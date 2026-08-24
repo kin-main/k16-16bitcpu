@@ -22,7 +22,10 @@ module regfile(
     input   [3:0] rdaddr_a,   // 読み出しA
     input   [3:0] rdaddr_b,   // 読み出しB
     output [15:0] rddata_a,   // データA
-    output [15:0] rddata_b    // データB
+    output [15:0] rddata_b,   // データB
+
+    // 命令フェッチ用PC出力
+    output [15:0] pc
 );
 
     // 16bit × 16本
@@ -34,6 +37,9 @@ module regfile(
     reg [15:0] regs [0:15];
 
     integer i;
+
+    // 命令フェッチ用PC
+    assign pc = regs[15];
 
     //==============================================================
     // レジスタ読み出し
