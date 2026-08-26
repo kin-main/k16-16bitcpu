@@ -2,7 +2,8 @@
 
 FPGA向けに設計された、シンプルで高クロック動作を目指す **16bit RISC CPU**（2段パイプライン）のVerilog-HDL実装です。
 KISS原則（Keep It Simple, Stupid）に基づき、必要最小限のシンプルな回路構成で最大の効率と見通しの良さを実現しています。
-
+一部AI使用
+このプロジェクトのライセンスはGPL v3です
 ---
 
 ## 1. 主要諸元 (Specifications)
