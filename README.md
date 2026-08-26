@@ -21,54 +21,8 @@ KISS原則（Keep It Simple, Stupid）に基づき、必要最小限のシンプ
 
 ---
 
-## 2. システムブロック図 (Architecture Block Diagram)
 
-```mermaid
-graph TD
-    subgraph S1["Stage 1: Fetch and Decode"]
-        PC["PC (r15)"] -->|inst_addr| MEM_INST["命令メモリ (24bit)"]
-        MEM_INST -->|inst_data| IR["命令レジスタ IR [23:0]"]
-        IR --> DEC["命令デコーダ (decoder.v)"]
-    end
-
-    subgraph S2["Stage 2: Execute, Memory and WriteBack"]
-        DEC -->|cond| COND["条件判定サブデコーダ (cond_check.v)"]
-        DEC -->|rs1, rs2| RF["レジスタファイル (regfile.v) r0-r15"]
-        DEC -->|imm| MUX_B["ALU B入力セレクタ"]
-        DEC -->|alu_funct| ALU["ALU演算器 (alu.v)"]
-        
-        RF -->|rddata_a| FWD_A["フォワーディング A"]
-        RF -->|rddata_b| FWD_B["フォワーディング B"]
-        
-        FWD_A --> ALU
-        FWD_B --> MUX_B
-        MUX_B --> ALU
-
-        ALU -->|Z, C, N| FLAGS["フラグレジスタ (Z, C, N)"]
-        FLAGS -.->|zf, cf, nf| COND
-        FLAGS -.->|zf, cf, nf| RF
-
-        COND -->|cond_match| CTRL["実行制御 (wtenable / mem_we)"]
-
-        ALU -->|mem_addr| MEM_DATA["データメモリ (24bit)"]
-        FWD_B -->|mem_wdata[15:0]| MEM_DATA
-        RF -->|topout r13[7:0]| MEM_DATA
-
-        MEM_DATA -->|mem_rdata[15:0]| MUX_WB["WriteBackセレクタ"]
-        ALU -->|alu_result| MUX_WB
-        MEM_DATA -->|mem_rdata[23:16]| RF
-
-        MUX_WB -->|wtdata| RF
-        CTRL -->|wtenable| RF
-    end
-
-    RF -->|PC更新| PC
-    CTRL -->|分岐フラッシュ| IR
-```
-
----
-
-## 3. レジスタ構成 (Register File)
+## 2. レジスタ構成 (Register File)
 
 | レジスタ | 名前 | 役割・動作 |
 |---|---|---|
@@ -80,7 +34,7 @@ graph TD
 
 ---
 
-## 4. 命令フォーマット (Instruction Format)
+## 3. 命令フォーマット (Instruction Format)
 
 全命令は **24bit固定長** で、最上位3bitに条件実行フィールド `cond[23:21]` を備えます。
 
@@ -110,7 +64,7 @@ graph TD
 
 ---
 
-## 5. 命令一覧 (Instruction Set)
+## 4. 命令一覧 (Instruction Set)
 
 ### 条件実行フィールド (`cond[23:21]`)
 | cond | アセンブリ | 実行条件 | 説明 |
@@ -146,7 +100,7 @@ graph TD
 
 ---
 
-## 6. ファイル構成 (File Structure)
+## 5. ファイル構成 (File Structure)
 
 ```
 k16-16bitcpu-1/
@@ -160,12 +114,13 @@ k16-16bitcpu-1/
 ├── ram.v            # 24bit幅 シミュレーション用メモリ
 ├── tb_cpu.v         # Verilog テストベンチ
 ├── sim_test.py      # サイクル精度検証 Python スクリプト
+├──lisence.txt 　　　 #ライセンス
 └── author’s memo/   # 設計構想スケッチ・原案画像
 ```
 
 ---
 
-## 7. シミュレーション & 動作検証 (Simulation)
+## 6. シミュレーション & 動作検証 (Simulation)
 
 Pythonによるサイクル精度シミュレータが同梱されており、Verilogの論理と完全一致するテストを即座に実行できます。
 
