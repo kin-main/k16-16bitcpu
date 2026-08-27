@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-k16 16bit RISC CPU サイクル精度シミュレータ & テスト検証スクリプト
+k16 16bit RISC CPU サイクル精度シミュレータ & テスト検証スクリプト (ノイマン型)
 Verilog (cpu.v, alu.v, regfile.v, decoder.v, cond_check.v, ram.v) のロジックと
 1対1で対応するサイクル精度モデルによりCPU動作を自動検証します。
+
+このCPUは命令メモリとデータメモリを分離しない単一アドレス空間・単一ポートの
+共有メモリ(mem_addr/mem_wdata/mem_rdata/mem_we)を採用したノイマン型です。
+そのため、条件成立したLoad/Store命令の実行サイクルでは、そのサイクルの
+メモリバスがデータアクセスに占有され、次命令のフェッチが行えません。
+このシミュレータは、その際に発生する1サイクルのバブル(構造的ハザード
+ストール)と、PCが進まず次サイクルに正しく再フェッチされる挙動を
+Verilog実装と完全に一致するかたちで再現します。
 """
 
 import sys
@@ -72,14 +80,17 @@ class RegFile:
             return (nf << 2) | (cf << 1) | zf
         return self.regs[addr]
 
-    def write(self, wtenable, wtaddr, wtdata, topenable, topin):
+    def write(self, wtenable, wtaddr, wtdata, topenable, topin, pc_hold):
         if wtenable and wtaddr != 0 and wtaddr != 14:
             if not (topenable and wtaddr == 13):
                 self.regs[wtaddr] = wtdata & 0xFFFF
         if topenable:
             self.regs[13] = (self.regs[13] & 0xFF00) | (topin & 0xFF)
         if not (wtenable and wtaddr == 15):
-            self.regs[15] = (self.regs[15] + 1) & 0xFFFF
+            # ノイマン型: 単一バスがデータアクセスに使われフェッチできなかった
+            # サイクル(pc_hold)はPCを保持し、次サイクルに再フェッチさせる
+            if not pc_hold:
+                self.regs[15] = (self.regs[15] + 1) & 0xFFFF
 
 def check_cond(cond, zf, cf, nf):
     if cond == 0b000: return True
@@ -129,21 +140,19 @@ def decode(inst):
         'reg_write': reg_write, 'flag_write': flag_write
     }
 
+NOP_INST = 0x800000  # cond=Never(100), op=00, 残り0
+
 class CPU:
     def __init__(self, mem):
         self.mem = mem
         self.alu = ALU()
         self.rf = RegFile()
-        self.ir = 0x800000 # NOP
+        self.ir = NOP_INST
         self.prev_wtaddr = 0
         self.prev_wtdata = 0
         self.prev_wtenable = False
 
     def step(self):
-        # Stage 1: Fetch
-        pc = self.rf.regs[15]
-        inst_fetched = self.mem.get(pc, 0x800000)
-
         # Stage 2: Decode & Execute current IR
         d = decode(self.ir)
         cond_match = check_cond(d['cond'], self.alu.Z, self.alu.C, self.alu.N)
@@ -160,19 +169,31 @@ class CPU:
 
         alu_res, temp = self.alu.compute(alu_in_a, alu_in_b, d['alu_funct'])
 
-        mem_addr = alu_res
+        #==================================================
+        # ノイマン型: 単一メモリバスの調停
+        # 条件成立したLoad/Store命令のサイクルはデータアクセスを
+        # 優先し、そのサイクルの命令フェッチはスキップされる。
+        #==================================================
+        is_mem_access = cond_match and (d['is_load'] or d['is_store'])
+
+        pc = self.rf.regs[15]
+        shared_addr = alu_res if is_mem_access else pc  # 共有アドレスバス
+
         topout = self.rf.regs[13] & 0xFF
         mem_wdata = (topout << 16) | (fwd_b & 0xFFFF)
         mem_we = cond_match and d['is_store']
 
         if mem_we:
-            self.mem[mem_addr] = mem_wdata
+            self.mem[shared_addr] = mem_wdata
 
-        mem_rdata = self.mem.get(mem_addr, 0)
-        topin = (mem_rdata >> 16) & 0xFF
+        # フェッチ時、未初期化領域はNOP扱い。データアクセス時は0扱い。
+        default_val = 0 if is_mem_access else NOP_INST
+        shared_rdata = self.mem.get(shared_addr, default_val)
+
+        topin = (shared_rdata >> 16) & 0xFF
 
         wtaddr = d['rd']
-        wtdata = (mem_rdata & 0xFFFF) if d['is_load'] else alu_res
+        wtdata = (shared_rdata & 0xFFFF) if d['is_load'] else alu_res
         wtenable = cond_match and d['reg_write']
         topenable = cond_match and d['is_load']
         flag_en = cond_match and d['flag_write']
@@ -181,14 +202,19 @@ class CPU:
         if flag_en:
             self.alu.update_flags(d['alu_funct'], alu_res, temp, alu_in_a)
 
-        # レジスタファイル更新
-        self.rf.write(wtenable, wtaddr, wtdata, topenable, topin)
+        # レジスタファイル更新 (PC hold込み)
+        self.rf.write(wtenable, wtaddr, wtdata, topenable, topin, pc_hold=is_mem_access)
 
-        # パイプラインレジスタ (IR) 更新: 分岐成立時はNOPを挿入
-        if wtenable and wtaddr == 15:
-            self.ir = 0x800000 # NOP
+        # パイプラインレジスタ (IR) 更新
+        if is_mem_access:
+            # 単一バスをデータアクセスに使用したためフェッチ不可 -> バブル挿入
+            self.ir = NOP_INST
+        elif wtenable and wtaddr == 15:
+            # 分岐成立: パイプラインフラッシュ
+            self.ir = NOP_INST
         else:
-            self.ir = inst_fetched
+            # 通常フェッチ (shared_addr == pc)
+            self.ir = shared_rdata
 
         # フォワーディング用レジスタ更新
         self.prev_wtaddr = wtaddr
@@ -251,10 +277,8 @@ def run_tests():
     mem[23] = encode_i(0b011, 6, 0, 200, 0b100)
     # 24: N==1条件テスト (成立 -> 実行): if (N==1) r5 = r0 + 123
     mem[24] = encode_i(0b111, 5, 0, 123, 0b100)
-    # 25: 減算オフセットStoreテスト: mem[r1 - 1] (アドレス10) <= {8'h77, 16'd999}
-    # まずr13=0x77
+    # 25: 減算オフセットStoreテスト: mem[r1 - 1] (アドレス10) <= {8'h77, 16'd99}
     mem[25] = encode_i(0b000, 13, 0, 0x77, 0b100)
-    # r7 = 999 (0 + 999 = 即値8bitでは255までなので、r7 = 200 + 200 + ... ではなく 99)
     mem[26] = encode_i(0b000, 7, 0, 99, 0b100)
     # Store: mem[r1 - 1] = {r13, r7}
     mem[27] = encode_ls(0b000, 7, 1, 1, 0b11)
@@ -263,11 +287,13 @@ def run_tests():
 
     cpu = CPU(mem)
 
-    # 45サイクル実行
-    for cycle in range(45):
+    # ノイマン型化により、条件成立したLoad/Store命令1つにつき
+    # 単一バス調停で1サイクルのストールが追加されるため、
+    # ハーバード型時代(45サイクル)より多めに実行して確実に完了させる。
+    for cycle in range(60):
         cpu.step()
 
-    print("=== k16 CPU シミュレーション検証結果 ===")
+    print("=== k16 CPU シミュレーション検証結果 (ノイマン型) ===")
     errors = 0
 
     checks = [

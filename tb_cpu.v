@@ -5,9 +5,7 @@ module tb_cpu;
     reg clk;
     reg rst;
 
-    // CPU - メモリ間インターフェース
-    wire [15:0] inst_addr;
-    wire [23:0] inst_data;
+    // CPU - メモリ間インターフェース (ノイマン型: 単一の共有バス)
     wire [15:0] mem_addr;
     wire [23:0] mem_wdata;
     wire [23:0] mem_rdata;
@@ -17,23 +15,19 @@ module tb_cpu;
     cpu u_cpu (
         .clk        (clk),
         .rst        (rst),
-        .inst_addr  (inst_addr),
-        .inst_data  (inst_data),
         .mem_addr   (mem_addr),
         .mem_wdata  (mem_wdata),
         .mem_rdata  (mem_rdata),
         .mem_we     (mem_we)
     );
 
-    // メモリインスタンス
+    // メモリインスタンス (命令・データ共用の単一ポート)
     ram u_ram (
         .clk        (clk),
-        .inst_addr  (inst_addr),
-        .inst_data  (inst_data),
-        .mem_addr   (mem_addr),
-        .mem_wdata  (mem_wdata),
-        .mem_rdata  (mem_rdata),
-        .mem_we     (mem_we)
+        .addr       (mem_addr),
+        .wdata      (mem_wdata),
+        .rdata      (mem_rdata),
+        .we         (mem_we)
     );
 
     // クロック生成 (10ns周期 = 100MHz)
@@ -127,8 +121,11 @@ module tb_cpu;
         #20;
         rst = 0;
 
-        // プログラム実行（45サイクル待機）
-        #450;
+        // プログラム実行
+        // ノイマン型化により、Load/Store命令1つにつき単一バスの
+        // 調停で1サイクルのストールが追加されるため、
+        // ハーバード型時代(45サイクル)より余裕を持たせて待機する。
+        #650;
 
         $display("=== k16 CPU 検証結果 ===");
 

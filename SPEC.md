@@ -11,9 +11,35 @@
 - **命令ワード幅**: 24-bit 固定長
 - **アドレス空間**: 16-bit（0x0000 〜 0xFFFF、64Kワード = 192KB相当）
 - **メモリデータ幅**: 24-bit（命令・データ共通フォーマット）
+- **メモリアーキテクチャ**: **ノイマン型 (von Neumann)** — 命令・データを分離せず、
+  単一アドレス空間・単一ポートの共有メモリバス（`mem_addr` / `mem_wdata` / `mem_rdata` / `mem_we`）
+  を命令フェッチとLoad/Storeの双方で使用する。
 - **パイプライン段数**: 2段
   - **Stage 1 (IF/ID)**: Instruction Fetch, Primary Decode
   - **Stage 2 (EX/MEM/WB)**: Condition Check, ALU Exec, Memory Access, Register Write-back
+
+### 1.2 ノイマン型ボトルネックと単一バス調停
+命令・データを同一の単一ポートメモリで共有するため、同一サイクルに
+「次命令のフェッチ」と「現在の命令(Load/Store)によるデータアクセス」を
+両立することはできない（構造的ハザード）。
+
+k16は以下のポリシーでこれを調停する:
+
+1. 条件成立した Load/Store 命令(`is_mem_access = cond_match && (is_load || is_store)`)
+   が Stage 2 で実行されるサイクルは、共有メモリバスをデータアクセス
+   （アドレス = ALU結果）に割り当てる。
+2. このサイクルは命令フェッチが行えないため、次サイクルの `ir` には
+   `NOP` を挿入してバブル化する。
+3. 同時に PC (`r15`) の自動 +1 を1サイクル停止(hold)し、フェッチできな
+   かった命令のアドレスを保持する。
+4. 次サイクルでバスが解放され、保持していたPCで正しく命令が再フェッチ
+   される。
+
+条件不成立でスキップされる Load/Store 命令はメモリアクセスを行わない
+ため `is_mem_access` は成立せず、通常どおりフェッチが継続される。
+
+この結果、**条件成立した Load/Store 命令は実行に1サイクルの構造的
+ハザード・ストールを伴う**（ALU演算・分岐命令にはこのペナルティはない）。
 
 ---
 
@@ -28,24 +54,33 @@ sequenceDiagram
     participant IF as Stage 1 IF_ID
     participant EX as Stage 2 EX_MEM_WB
     participant RF as レジスタファイル
-    participant MEM as メモリ
+    participant MEM as 統合メモリ(単一ポート)
 
-    Note over IF,EX: サイクル T: 命令 i のフェッチ
+    Note over IF,EX: サイクル T: 命令 i のフェッチ (ALU命令の場合、バス空き)
     Clock->>IF: pc が指すアドレスを出力
-    IF->>MEM: inst_addr = PC
-    MEM-->>IF: inst_data = 命令 i
+    IF->>MEM: mem_addr = PC
+    MEM-->>IF: mem_rdata = 命令 i
 
     Note over IF,EX: サイクル T+1: 命令 i の実行 と 命令 i+1 のフェッチ
-    Clock->>IF: ir = 命令 i, PC = PC + 1
+    Clock->>IF: ir = 命令 i, PC = PC + 1 (pc_hold=0時)
     IF->>EX: デコード信号 (cond, op, rd, rs, imm, funkt)
     EX->>RF: rdaddr_a = rs1, rdaddr_b = rs2
     RF-->>EX: rddata_a, rddata_b (フォワーディング適用)
     EX->>EX: cond_check (Z,C,N照合) -> cond_match
     EX->>EX: ALU演算 / アドレス計算
-    opt Load/Store時
-        EX->>MEM: mem_addr, mem_wdata, mem_we
-        MEM-->>EX: mem_rdata
+    EX->>EX: is_mem_access = cond_match && (is_load || is_store)
+
+    alt is_mem_access = 1 (Load/Store実行)
+        Note over IF,MEM: 単一バスをデータアクセスに割当 -> 命令フェッチは不可
+        EX->>MEM: mem_addr = ALU結果, mem_wdata, mem_we
+        MEM-->>EX: mem_rdata (ロードデータ)
+        Clock->>IF: ir <= NOP (バブル挿入)
+        Clock->>RF: pc_hold=1 -> PC据え置き (次サイクルに再フェッチ)
+    else is_mem_access = 0 (ALU命令 / 条件不成立でスキップ)
+        Note over IF,MEM: バスは命令フェッチに使用 (通常どおり)
+        IF->>MEM: mem_addr = PC (次命令フェッチ継続)
     end
+
     Clock->>RF: wtenable時 wtdata 書き込み / フラグ更新
 ```
 
@@ -64,6 +99,20 @@ PC（`r15`）への明示的な書き込み（分岐命令）が成立した場�
 1. クロック立ち上がりで `PC <= 分岐先アドレス` が更新される。
 2. 同時に、すでにフェッチされていた直後の命令（`mem[PC+1]`）を無効化するため、次サイクルの **`ir` に `NOP`（`24'h800000`）を挿入** します。
 3. 分岐ペナルティは **1サイクルバブル** のみです。
+
+### 2.4 単一メモリバスの構造的ハザード (Load/Storeストール)
+ノイマン型のため命令フェッチとデータアクセスは同じメモリポートを共有します。
+条件成立した Load/Store 命令（`is_mem_access = cond_match && (is_load || is_store)`）が
+実行されるサイクルは：
+1. 共有バス（`mem_addr`/`mem_wdata`/`mem_rdata`/`mem_we`）はデータアクセス（アドレス = ALU結果）に割り当てられる。
+2. 命令フェッチは行われず、次サイクルの `ir` に `NOP` を挿入してバブル化する。
+3. `pc_hold` により PC の自動 +1 を1サイクル停止し、フェッチできなかったアドレスを保持する。
+4. 次サイクルにバスが解放され、保持していたPCで正しく再フェッチされる。
+
+条件不成立でスキップされる Load/Store 命令は `is_mem_access` が不成立となるため、
+このストールは発生しません。**Load/Storeストールのペナルティは1サイクル**です
+（分岐フラッシュとは独立したバブルで、両者が同時に発生することはありません。
+Load/Store命令自身がPCへ書き込むことはないためです）。
 
 ---
 
@@ -165,16 +214,27 @@ module cpu (
     input  wire        clk,        // システムクロック
     input  wire        rst,        // High有効非同期リセット
 
-    // 命令メモリポート (ROM)
-    output wire [15:0] inst_addr,  // 命令フェッチアドレス (PC)
-    input  wire [23:0] inst_data,  // 24bit フェッチ命令
-
-    // データメモリポート (RAM)
-    output wire [15:0] mem_addr,   // データメモリアドレス
-    output wire [23:0] mem_wdata,  // データメモリ書き込みデータ
-    input  wire [23:0] mem_rdata,  // データメモリ読み出しデータ
-    output wire        mem_we      // データメモリライトイネーブル
+    // 統合メモリポート (ノイマン型: 命令フェッチ・データアクセス共用の単一バス)
+    output wire [15:0] mem_addr,   // メモリアドレス (フェッチ時=PC, データアクセス時=ALU結果)
+    output wire [23:0] mem_wdata,  // メモリ書き込みデータ
+    input  wire [23:0] mem_rdata,  // メモリ読み出しデータ (命令 or データ)
+    output wire        mem_we      // メモリライトイネーブル
 );
+```
+
+同一サイクルに使用できるのはこの単一バス系統のみであり、命令メモリ用・
+データメモリ用の個別ポートは存在しない（`inst_addr`/`inst_data` は廃止）。
+どちらの用途にバスを割り当てるかは `cpu.v` 内部の `is_mem_access` 信号に
+よって毎サイクル決定される（詳細は 1.2 節・2.4 節を参照）。
+
+### 5.2 レジスタファイルモジュール (`regfile.v`) の `pc_hold`
+
+単一バス調停のため、`regfile.v` には `pc_hold` 入力が追加されている。
+`pc_hold=1` の間、PC(`r15`)の自動 +1 は停止し、値を保持する。
+
+```verilog
+output [15:0] pc,
+input         pc_hold   // 1: このサイクルはフェッチ不可 -> PCを保持
 ```
 
 ---
@@ -186,3 +246,6 @@ module cpu (
    - ALU演算とデコードを明確に分離し、FPGAのLUTレベルで高速動作が可能なシンプルな組み合わせ論理として記述。
 3. **明快なモジュール階層**:
    - `cpu.v`（統合・パイプライン）、`decoder.v`（命令デコード）、`cond_check.v`（条件判定）、`regfile.v`（レジスタ管理）、`alu.v`（演算器）に機能ごとに明確に責務を分離。
+4. **メモリ構成の単純化 (ノイマン型)**:
+   - 命令メモリとデータメモリを分離せず単一ポートに統一することで、外部メモリインターフェースおよびFPGA上のメモリブロック(BRAM)使用量を削減。
+   - 引き換えにLoad/Store命令実行時の1サイクルストールという構造的ハザードを許容するが、調停ロジックは `is_mem_access` 信号1本による単純なマルチプレクサ制御のみで実現しており、回路規模・検証コストの増加を最小限に抑えている。

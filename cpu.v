@@ -2,15 +2,11 @@ module cpu (
     input  wire        clk,
     input  wire        rst,
 
-    // 命令メモリ (ROM/RAM) インターフェース
-    output wire [15:0] inst_addr,    // フェッチアドレス (PC)
-    input  wire [23:0] inst_data,    // フェッチされた24bit命令
-
-    // データメモリ (RAM) インターフェース
-    output wire [15:0] mem_addr,     // データメモリアドレス
-    output wire [23:0] mem_wdata,    // データメモリ書き込みデータ
-    input  wire [23:0] mem_rdata,    // データメモリ読み出しデータ
-    output wire        mem_we        // データメモリ書き込みイネーブル
+    // 統合メモリインターフェース (ノイマン型: 命令・データ共用の単一バス)
+    output wire [15:0] mem_addr,     // メモリアドレス (命令フェッチ時=PC, データアクセス時=ALU結果)
+    output wire [23:0] mem_wdata,    // メモリ書き込みデータ
+    input  wire [23:0] mem_rdata,    // メモリ読み出しデータ (命令 or データ)
+    output wire        mem_we        // メモリ書き込みイネーブル
 );
 
     //==========================================================
@@ -62,10 +58,36 @@ module cpu (
     reg         prev_wtenable;
 
     //==========================================================
+    // ノイマン型 単一メモリバスの調停 (構造的ハザード)
+    //==========================================================
+    //
+    // このCPUは命令メモリとデータメモリを分離しない、単一アドレス空間・
+    // 単一ポートの共有メモリ(mem_addr/mem_wdata/mem_rdata/mem_we)を使用する。
+    // そのため「次命令のフェッチ」と「現在の命令(Load/Store)のデータアクセス」
+    // を同一サイクルに同時実行することはできない。
+    //
+    // 本設計ではデータアクセスを優先する:
+    //   - 現在のIRが条件成立のLoad/Storeの場合(is_mem_access) 、
+    //     このサイクルはメモリバスをデータアクセスに割り当てる。
+    //   - この間フェッチは行われないため、パイプラインには1サイクルの
+    //     バブル(NOP)を挿入し、PCは進めずに保持する。
+    //   - 次サイクルでバスが解放されるので、保持していたPCで
+    //     正しく命令をフェッチし直す(1サイクルの実行遅延ペナルティ)。
+    //
+    // is_load/is_storeは条件判定前のデコード結果だが、実際にメモリを
+    // 使用する必要があるかどうかはcond_matchで確定するため、
+    // cond_matchが不成立(スキップされる条件付きLoad/Store)の場合は
+    // バスを占有せず、通常どおり毎サイクル継続してフェッチを行う。
+    wire is_mem_access = cond_match && (is_load || is_store);
+
+    // 共有アドレスバス: データアクセス時はALU結果、それ以外はPC(フェッチ)
+    wire [15:0] shared_addr = is_mem_access ? alu_result : pc;
+
+    //==========================================================
     // Stage 1: 命令フェッチ & パイプラインラッチ
     //==========================================================
 
-    assign inst_addr = pc;
+    assign mem_addr = shared_addr;
 
     // NOP命令定数 (cond = 3'b100 Never)
     localparam NOP_INST = 24'b100_00_0000_0000_0000_0000_000;
@@ -73,11 +95,14 @@ module cpu (
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             ir <= NOP_INST;
+        end else if (is_mem_access) begin
+            // 単一バスをデータアクセスに使用したためフェッチ不可 -> バブル挿入
+            ir <= NOP_INST;
         end else if (wtenable && (wtaddr == 4'd15)) begin
             // 分岐成立 (PC書き込み): 次サイクルのIRにNOPを挿入してパイプラインをフラッシュ
             ir <= NOP_INST;
         end else begin
-            ir <= inst_data;
+            ir <= mem_rdata;
         end
     end
 
@@ -135,7 +160,8 @@ module cpu (
         .rdaddr_b      (rs2),
         .rddata_a      (rddata_a),
         .rddata_b      (rddata_b),
-        .pc            (pc)
+        .pc            (pc),
+        .pc_hold       (is_mem_access)
     );
 
     //==========================================================
@@ -184,13 +210,11 @@ module cpu (
     // データメモリ・レジスタ書き込み制御
     //==========================================================
 
-    // メモリアドレス: ALU結果 (base + im または base - im)
-    assign mem_addr  = alu_result;
-
     // メモリ書き込みデータ: 上位8bit=r13[7:0], 下位16bit=rdの値 (fwd_data_b)
     assign mem_wdata = {topout, fwd_data_b};
 
     // メモリライトイネーブル: 条件成立かつStore命令時
+    // (is_store成立時は必ずis_mem_access=1となり、shared_addr=alu_resultが選択される)
     assign mem_we    = cond_match && is_store;
 
     // レジスタ書き込み先・データ・イネーブル
