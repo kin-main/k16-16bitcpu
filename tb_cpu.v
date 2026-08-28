@@ -11,8 +11,11 @@ module tb_cpu;
     localparam CLKS_PER_BIT = 10;
 
     // SoC インスタンス (CPU + RAM + MMIO/UART)
+    // INIT_FILE="firmware.hex" が存在する場合、$readmemh で自動ロード
+    // 空文字列を指定した場合は manual 初期化ブロック (後段) のみが有効
     k16_soc #(
-        .CLKS_PER_BIT (CLKS_PER_BIT)
+        .CLKS_PER_BIT (CLKS_PER_BIT),
+        .INIT_FILE    ("firmware.hex")  // firmware.hex から自動ロード
     ) u_soc (
         .clk     (clk),
         .rst     (rst),

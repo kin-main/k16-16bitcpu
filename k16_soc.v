@@ -7,10 +7,12 @@
  * - メモリマップ:
  *     0x0000 〜 0xFEFF : メインRAM (命令・データ共用)
  *     0xFF00 〜 0xFFFF : MMIO (0xFF00: UART_DATA, 0xFF01: UART_STATUS)
+ * - 起動時 firmware.hex を $readmemh でロード (FPGA/シミュレーション両用)
  *============================================================================*/
 
 module k16_soc #(
-    parameter CLKS_PER_BIT = 868  // 1ビットあたりのクロックサイクル数
+    parameter CLKS_PER_BIT = 868,             // 1ビットあたりのクロックサイクル数
+    parameter INIT_FILE    = "firmware.hex"   // 起動時ロードするファームウェアHEX
 )(
     input  wire clk,
     input  wire rst,
@@ -57,7 +59,9 @@ module k16_soc #(
     //==========================================================================
     // 2. メインRAM (24bit幅, 64Kワード空間)
     //==========================================================================
-    ram u_ram (
+    ram #(
+        .INIT_FILE (INIT_FILE)
+    ) u_ram (
         .clk   (clk),
         .addr  (mem_addr),
         .wdata (mem_wdata),
