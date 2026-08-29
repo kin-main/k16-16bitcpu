@@ -1,207 +1,82 @@
 /*==============================================================================
- * モジュール名 : uart
- * 概要         : 8-N-1 UART 送受信モジュール (自己完結型・KISS原則)
- * 
- * 【仕様】
- * - フォーマット : 8データビット、パリティなし、1ストップビット (8-N-1)
- * - ボーレート   : パラメータ CLKS_PER_BIT で指定 (デフォルト 868: 100MHz時 115200bps)
- * - リセット     : Highアクティブ同期/非同期リセット (rst)
+ * モジュール名 : k16_soc
+ * 概要          : k16 CPU, 統合RAM, MMIO(UART IO) を統合したノイマン型SoCトップ
  *============================================================================*/
 
-module uart #(
-    parameter CLKS_PER_BIT = 868  // 1ビットあたりのクロックサイクル数
+module k16_soc #(
+    parameter CLKS_PER_BIT = 868,              // 1ビットあたりのクロックサイクル数
+    parameter INIT_FILE    = "firmware.hex"    // 起動時ロードするファームウェアHEX
 )(
-    input  wire       clk,        // システムクロック
-    input  wire       rst,        // Highアクティブリセット
+    input  wire clk,
+    input  wire rst,
 
-    // 送信インターフェース (TX)
-    input  wire [7:0] tx_data,    // 送信データ
-    input  wire       tx_start,   // 送信開始パルス (1クロック幅)
-    output wire       uart_tx,    // UART TX ピン出力
-    output wire       tx_busy,    // 送信中フラグ (1: 送信中, 0: アイドル)
-    output reg        tx_done,    // 送信完了パルス (1クロック幅)
-
-    // 受信インターフェース (RX)
-    input  wire       uart_rx,    // UART RX ピン入力
-    output reg  [7:0] rx_data,    // 受信データ
-    output reg        rx_ready,   // 受信完了フラグ (データ保持中: 1)
-    input  wire       rx_clear    // 受信フラグクリア入力
+    // シリアル通信ピン
+    input  wire uart_rx,
+    output wire uart_tx
 );
 
     //==========================================================================
-    // UART 送信 (TX) 制御ステートマシン
+    // 統合メモリバス (ノイマン型単一バス)
     //==========================================================================
-    localparam TX_IDLE  = 2'd0;
-    localparam TX_START = 2'd1;
-    localparam TX_DATA  = 2'd2;
-    localparam TX_STOP  = 2'd3;
+    wire [15:0] mem_addr;
+    wire [23:0] mem_wdata;
+    wire [23:0] mem_rdata;
+    wire        mem_we;
 
-    reg [1:0]  tx_state;
-    reg [15:0] tx_clk_cnt;
-    reg [2:0]  tx_bit_idx;
-    reg [7:0]  tx_shift_reg;
-    reg        tx_out;
+    // RAM / MMIO 読み出しデータ
+    wire [23:0] ram_rdata;
+    wire [23:0] mmio_rdata;
 
-    assign uart_tx = tx_out;
-    assign tx_busy = (tx_state != TX_IDLE);
+    // アドレスデコード: 0xFF00以上はMMIO領域
+    wire is_mmio = (mem_addr >= 16'hFF00);
 
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            tx_state     <= TX_IDLE;
-            tx_clk_cnt   <= 16'd0;
-            tx_bit_idx   <= 3'd0;
-            tx_shift_reg <= 8'd0;
-            tx_out       <= 1'b1; // アイドル時はHigh
-            tx_done      <= 1'b0;
-        end else begin
-            tx_done <= 1'b0;
+    // 書き込みイネーブルの振り分け
+    wire ram_we  = mem_we && (!is_mmio);
+    wire mmio_we = mem_we && is_mmio;
 
-            case (tx_state)
-                TX_IDLE: begin
-                    tx_out     <= 1'b1;
-                    tx_clk_cnt <= 16'd0;
-                    tx_bit_idx <= 3'd0;
-                    if (tx_start) begin
-                        tx_shift_reg <= tx_data;
-                        tx_state     <= TX_START;
-                        tx_out       <= 1'b0; // スタートビット (Low)
-                    end
-                end
-
-                TX_START: begin
-                    tx_out <= 1'b0;
-                    if (tx_clk_cnt < CLKS_PER_BIT - 1) begin
-                        tx_clk_cnt <= tx_clk_cnt + 16'd1;
-                    end else begin
-                        tx_clk_cnt <= 16'd0;
-                        tx_state   <= TX_DATA;
-                    end
-                end
-
-                TX_DATA: begin
-                    tx_out <= tx_shift_reg[tx_bit_idx];
-                    if (tx_clk_cnt < CLKS_PER_BIT - 1) begin
-                        tx_clk_cnt <= tx_clk_cnt + 16'd1;
-                    end else begin
-                        tx_clk_cnt <= 16'd0;
-                        if (tx_bit_idx < 3'd7) begin
-                            tx_bit_idx <= tx_bit_idx + 3'd1;
-                        end else begin
-                            tx_bit_idx <= 3'd0;
-                            tx_state   <= TX_STOP;
-                        end
-                    end
-                end
-
-                TX_STOP: begin
-                    tx_out <= 1'b1; // ストップビット (High)
-                    if (tx_clk_cnt < CLKS_PER_BIT - 1) begin
-                        tx_clk_cnt <= tx_clk_cnt + 16'd1;
-                    end else begin
-                        tx_clk_cnt <= 16'd0;
-                        tx_state   <= TX_IDLE;
-                        tx_done    <= 1'b1;
-                    end
-                end
-
-                default: tx_state <= TX_IDLE;
-            endcase
-        end
-    end
+    // 読み出しデータのマルチプレクス (ノイマン型単一バスへ返却)
+    assign mem_rdata = is_mmio ? mmio_rdata : ram_rdata;
 
     //==========================================================================
-    // UART 受信 (RX) 制御ステートマシン
+    // 1. k16 CPU コア
     //==========================================================================
-    localparam RX_IDLE  = 2'd0;
-    localparam RX_START = 2'd1;
-    localparam RX_DATA  = 2'd2;
-    localparam RX_STOP  = 2'd3;
+    cpu u_cpu (
+        .clk       (clk),
+        .rst       (rst),
+        .mem_addr  (mem_addr),
+        .mem_wdata (mem_wdata),
+        .mem_rdata (mem_rdata),
+        .mem_we    (mem_we)
+    );
 
-    reg [1:0]  rx_state;
-    reg [15:0] rx_clk_cnt;
-    reg [2:0]  rx_bit_idx;
-    reg [7:0]  rx_shift_reg;
+    //==========================================================================
+    // 2. メインRAM (24bit幅, 16Kワード空間: 0x0000 〜 0x3FFF)
+    //==========================================================================
+    // ★ 下位14bit (0x0000〜0x3FFF = 16,384ワード) のみを RAM モジュールへ接続
+    ram #(
+        .INIT_FILE (INIT_FILE)
+    ) u_ram (
+        .clk   (clk),
+        .addr  (mem_addr[13:0]), // ★ 16bit から 14bit に変更して渡す
+        .wdata (mem_wdata),
+        .rdata (ram_rdata),
+        .we    (ram_we)
+    );
 
-    // メタスタビリティ対策 (2段同期化)
-    reg rx_sync1, rx_sync2;
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            rx_sync1 <= 1'b1;
-            rx_sync2 <= 1'b1;
-        end else begin
-            rx_sync1 <= uart_rx;
-            rx_sync2 <= rx_sync1;
-        end
-    end
-
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            rx_state     <= RX_IDLE;
-            rx_clk_cnt   <= 16'd0;
-            rx_bit_idx   <= 3'd0;
-            rx_shift_reg <= 8'd0;
-            rx_data      <= 8'd0;
-            rx_ready     <= 1'b0;
-        end else begin
-            if (rx_clear) begin
-                rx_ready <= 1'b0;
-            end
-
-            case (rx_state)
-                RX_IDLE: begin
-                    rx_clk_cnt <= 16'd0;
-                    rx_bit_idx <= 3'd0;
-                    // スタートビット (立ち下がり) 検知
-                    if (rx_sync2 == 1'b0) begin
-                        rx_state <= RX_START;
-                    end
-                end
-
-                // スタートビットの中央まで待機
-                RX_START: begin
-                    if (rx_clk_cnt < (CLKS_PER_BIT / 2)) begin
-                        rx_clk_cnt <= rx_clk_cnt + 16'd1;
-                    end else begin
-                        rx_clk_cnt <= 16'd0;
-                        if (rx_sync2 == 1'b0) begin
-                            rx_state <= RX_DATA; // 正常なスタートビット確認
-                        end else begin
-                            rx_state <= RX_IDLE; // ノイズ等による誤検知
-                        end
-                    end
-                end
-
-                // データビット受信 (各ビットの中央でサンプリング)
-                RX_DATA: begin
-                    if (rx_clk_cnt < CLKS_PER_BIT - 1) begin
-                        rx_clk_cnt <= rx_clk_cnt + 16'd1;
-                    end else begin
-                        rx_clk_cnt               <= 16'd0;
-                        rx_shift_reg[rx_bit_idx] <= rx_sync2;
-                        if (rx_bit_idx < 3'd7) begin
-                            rx_bit_idx <= rx_bit_idx + 3'd1;
-                        end else begin
-                            rx_bit_idx <= 3'd0;
-                            rx_state   <= RX_STOP;
-                        end
-                    end
-                end
-
-                // ストップビット受信
-                RX_STOP: begin
-                    if (rx_clk_cnt < CLKS_PER_BIT - 1) begin
-                        rx_clk_cnt <= rx_clk_cnt + 16'd1;
-                    end else begin
-                        rx_clk_cnt <= 16'd0;
-                        rx_state   <= RX_IDLE;
-                        rx_data    <= rx_shift_reg;
-                        rx_ready   <= 1'b1; // 受信完了フラグをセット
-                    end
-                end
-
-                default: rx_state <= RX_IDLE;
-            endcase
-        end
-    end
+    //==========================================================================
+    // 3. MMIO コントローラ (UART I/O 含む)
+    //==========================================================================
+    mmio #(
+        .CLKS_PER_BIT (CLKS_PER_BIT)
+    ) u_mmio (
+        .clk      (clk),
+        .rst      (rst),
+        .addr     (mem_addr),
+        .wdata    (mem_wdata),
+        .rdata    (mmio_rdata),
+        .we       (mmio_we),
+        .uart_rx  (uart_rx),
+        .uart_tx  (uart_tx)
+    );
 
 endmodule
