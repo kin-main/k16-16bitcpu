@@ -1,18 +1,11 @@
 /*==============================================================================
  * モジュール名 : k16_soc
- * 概要         : k16 CPU, 統合RAM, MMIO(UART IO) を統合したノイマン型SoCトップ
- * 
- * 【アーキテクチャ】
- * - ノイマン型: 命令フェッチとデータアクセスで単一の共有メモリバスを使用
- * - メモリマップ:
- *     0x0000 〜 0xFEFF : メインRAM (命令・データ共用)
- *     0xFF00 〜 0xFFFF : MMIO (0xFF00: UART_DATA, 0xFF01: UART_STATUS)
- * - 起動時 firmware.hex を $readmemh でロード (FPGA/シミュレーション両用)
+ * 概要          : k16 CPU, 統合RAM, MMIO(UART IO) を統合したノイマン型SoCトップ
  *============================================================================*/
 
 module k16_soc #(
-    parameter CLKS_PER_BIT = 868,             // 1ビットあたりのクロックサイクル数
-    parameter INIT_FILE    = "firmware.hex"   // 起動時ロードするファームウェアHEX
+    parameter CLKS_PER_BIT = 868,              // 1ビットあたりのクロックサイクル数
+    parameter INIT_FILE    = "firmware.hex"    // 起動時ロードするファームウェアHEX
 )(
     input  wire clk,
     input  wire rst,
@@ -57,13 +50,14 @@ module k16_soc #(
     );
 
     //==========================================================================
-    // 2. メインRAM (24bit幅, 64Kワード空間)
+    // 2. メインRAM (24bit幅, 16Kワード空間: 0x0000 〜 0x3FFF)
     //==========================================================================
+    // ★ 下位14bit (0x0000〜0x3FFF = 16,384ワード) のみを RAM モジュールへ接続
     ram #(
         .INIT_FILE (INIT_FILE)
     ) u_ram (
         .clk   (clk),
-        .addr  (mem_addr),
+        .addr  (mem_addr[13:0]), // ★ 16bit から 14bit に変更して渡す
         .wdata (mem_wdata),
         .rdata (ram_rdata),
         .we    (ram_we)
