@@ -152,12 +152,12 @@ module cpu (
     // 条件判定 (Sub-Decoder)
     //==========================================================
 
-    cond_check u_cond_check (
-        .cond          (cond),
-        .zf            (zf),
-        .cf            (cf),
-        .nf            (nf),
-        .match         (cond_match)
+ cond_check u_cond_check (
+        .cond   (cond),
+        .zf     (zf),
+        .cf     (cf),
+        .nf     (nf),
+        .match  (cond_match)  // ← 左側(.match)はcond_checkのポート名、右側(cond_match)はcpu.vのワイヤ名
     );
 
     //==========================================================
