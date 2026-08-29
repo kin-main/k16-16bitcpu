@@ -1,40 +1,82 @@
-module ram #(
-    // FPGAおよびシミュレーション用初期化ファイル
-    // $readmemh で firmware.hex をロードする
-    // 合成ツール (Quartus/Vivado) では BRAM の初期値として使用される
-    parameter INIT_FILE = "firmware.hex"
-)(
-    input  wire        clk,
+/*==============================================================================
+ * モジュール名 : k16_soc
+ * 概要          : k16 CPU, 統合RAM, MMIO(UART IO) を統合したノイマン型SoCトップ
+ *============================================================================*/
 
-    // 統合メモリポート (命令フェッチ / データアクセス共用, ノイマン型)
-    // 同一サイクルに使えるのは1系統のみ。cpu側でアドレスを
-    // 命令フェッチ用(PC) / データアクセス用(ALU結果) に多重化してから接続する。
-    input  wire [15:0] addr,
-    input  wire [23:0] wdata,
-    output wire [23:0] rdata,
-    input  wire        we
+module k16_soc #(
+    parameter CLKS_PER_BIT = 868,              // 1ビットあたりのクロックサイクル数
+    parameter INIT_FILE    = "firmware.hex"    // 起動時ロードするファームウェアHEX
+)(
+    input  wire clk,
+    input  wire rst,
+
+    // シリアル通信ピン
+    input  wire uart_rx,
+    output wire uart_tx
 );
 
-    // 24bit x 65536 ワードのメモリ空間 (命令・データ共用の単一アドレス空間)
-    reg [23:0] memory [0:65535];
+    //==========================================================================
+    // 統合メモリバス (ノイマン型単一バス)
+    //==========================================================================
+    wire [15:0] mem_addr;
+    wire [23:0] mem_wdata;
+    wire [23:0] mem_rdata;
+    wire        mem_we;
 
-    // 初期化: firmware.hex をロード
-    // シミュレーション: $readmemh で即時ロード
-    // FPGA合成: Quartus/Vivado が BRAM init として解釈
-    initial begin
-        if (INIT_FILE != "") begin
-            $readmemh(INIT_FILE, memory);
-        end
-    end
+    // RAM / MMIO 読み出しデータ
+    wire [23:0] ram_rdata;
+    wire [23:0] mmio_rdata;
 
-    // 非同期読み出し (組み合わせ回路)
-    assign rdata = memory[addr];
+    // アドレスデコード: 0xFF00以上はMMIO領域
+    wire is_mmio = (mem_addr >= 16'hFF00);
 
-    // クロック同期書き込み
-    always @(posedge clk) begin
-        if (we) begin
-            memory[addr] <= wdata;
-        end
-    end
+    // 書き込みイネーブルの振り分け
+    wire ram_we  = mem_we && (!is_mmio);
+    wire mmio_we = mem_we && is_mmio;
+
+    // 読み出しデータのマルチプレクス (ノイマン型単一バスへ返却)
+    assign mem_rdata = is_mmio ? mmio_rdata : ram_rdata;
+
+    //==========================================================================
+    // 1. k16 CPU コア
+    //==========================================================================
+    cpu u_cpu (
+        .clk       (clk),
+        .rst       (rst),
+        .mem_addr  (mem_addr),
+        .mem_wdata (mem_wdata),
+        .mem_rdata (mem_rdata),
+        .mem_we    (mem_we)
+    );
+
+    //==========================================================================
+    // 2. メインRAM (24bit幅, 16Kワード空間: 0x0000 〜 0x3FFF)
+    //==========================================================================
+    // ★ 下位14bit (0x0000〜0x3FFF = 16,384ワード) のみを RAM モジュールへ接続
+    ram #(
+        .INIT_FILE (INIT_FILE)
+    ) u_ram (
+        .clk   (clk),
+        .addr  (mem_addr[13:0]), // ★ 16bit から 14bit に変更して渡す
+        .wdata (mem_wdata),
+        .rdata (ram_rdata),
+        .we    (ram_we)
+    );
+
+    //==========================================================================
+    // 3. MMIO コントローラ (UART I/O 含む)
+    //==========================================================================
+    mmio #(
+        .CLKS_PER_BIT (CLKS_PER_BIT)
+    ) u_mmio (
+        .clk      (clk),
+        .rst      (rst),
+        .addr     (mem_addr),
+        .wdata    (mem_wdata),
+        .rdata    (mmio_rdata),
+        .we       (mmio_we),
+        .uart_rx  (uart_rx),
+        .uart_tx  (uart_tx)
+    );
 
 endmodule
