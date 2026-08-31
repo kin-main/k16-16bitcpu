@@ -147,35 +147,43 @@ module tb_cpu;
         u_soc.u_ram.memory[34] = encode_ls(3'b000, 4'd7, 4'd9, 9'd0, 2'b10);
         // 35: UART送信中ステータス確認: r10 <= mem[r9 + 1] -> tx_busy=1
         u_soc.u_ram.memory[35] = encode_ls(3'b000, 4'd10, 4'd9, 9'd1, 2'b00);
-        // 36: UART受信ステータス確認: r12 <= mem[r9 + 1]
-        u_soc.u_ram.memory[36] = encode_ls(3'b000, 4'd12, 4'd9, 9'd1, 2'b00);
-        // 37: UART受信データ読み出し: r6 <= mem[r9 + 0]
-        u_soc.u_ram.memory[37] = encode_ls(3'b000, 4'd6, 4'd9, 9'd0, 2'b00);
 
-        // 38〜: 特殊レジスタ検証 (r0, r14, r15)
-        // 38: r0への書き込み (ADDI r0, r0, 55) -> 無視されるべき
-        u_soc.u_ram.memory[38] = encode_i(3'b000, 4'd0, 4'd0, 8'd55, 3'b100);
-        // 39: 直後にr0読み出し (ADD r2, r0, 0) -> フォワーディングされず0であること
-        u_soc.u_ram.memory[39] = encode_r(3'b000, 4'd2, 4'd0, 4'd0, 3'b100);
-        // 40: r14(フラグ)直読み (ADD r11, r14, 0) -> 直前が結果0なので Z=1 -> 1
-        u_soc.u_ram.memory[40] = encode_r(3'b000, 4'd11, 4'd14, 4'd0, 3'b100);
-        // 41: r14への強制書き込み (ADDI r14, r0, 255) -> 書き込み無視
-        u_soc.u_ram.memory[41] = encode_i(3'b000, 4'd14, 4'd0, 8'd255, 3'b100);
-        // 42: 直後にr14読み出し (ADD r5, r14, 0) -> 255でなく更新後フラグ値0が読める
-        u_soc.u_ram.memory[42] = encode_r(3'b000, 4'd5, 4'd14, 4'd0, 3'b100);
-        // 43: r15(PC)読み出し (ADD r8, r15, 0) -> 現在のフェッチPC (44)
-        u_soc.u_ram.memory[43] = encode_r(3'b000, 4'd8, 4'd15, 4'd0, 3'b100);
+        //======================================================
+        // ★ここから変更: UART受信をポーリングループで待つ方式に変更
+        //======================================================
+        // 36: LOOP: UART受信ステータス確認: r12 <= mem[r9 + 1]
+        u_soc.u_ram.memory[36] = encode_ls(3'b000, 4'd12, 4'd9, 9'd1, 2'b00);
+        // 37: r12 = r12 AND 2 (rx_readyビットだけ抽出。0ならZ=1, 1ならZ=0)
+        u_soc.u_ram.memory[37] = encode_i(3'b000, 4'd12, 4'd12, 8'd2, 3'b010);
+        // 38: if (Z==1) r15 = 36 へ分岐 (rx_ready==0ならLOOPへ戻る)
+        u_soc.u_ram.memory[38] = encode_i(3'b101, 4'd15, 4'd0, 8'd36, 3'b100);
+        // 39: UART受信データ読み出し: r6 <= mem[r9 + 0] (rx_ready==1でここに到達)
+        u_soc.u_ram.memory[39] = encode_ls(3'b000, 4'd6, 4'd9, 9'd0, 2'b00);
+
+        // 40〜: 特殊レジスタ検証 (r0, r14, r15) ※アドレスを40以降にシフト
+        // 40: r0への書き込み (ADDI r0, r0, 55) -> 無視されるべき
+        u_soc.u_ram.memory[40] = encode_i(3'b000, 4'd0, 4'd0, 8'd55, 3'b100);
+        // 41: 直後にr0読み出し (ADD r2, r0, 0) -> フォワーディングされず0であること
+        u_soc.u_ram.memory[41] = encode_r(3'b000, 4'd2, 4'd0, 4'd0, 3'b100);
+        // 42: r14(フラグ)直読み (ADD r11, r14, 0) -> 直前が結果0なので Z=1 -> 1
+        u_soc.u_ram.memory[42] = encode_r(3'b000, 4'd11, 4'd14, 4'd0, 3'b100);
+        // 43: r14への強制書き込み (ADDI r14, r0, 255) -> 書き込み無視
+        u_soc.u_ram.memory[43] = encode_i(3'b000, 4'd14, 4'd0, 8'd255, 3'b100);
+        // 44: 直後にr14読み出し (ADD r5, r14, 0) -> 255でなく更新後フラグ値0が読める
+        u_soc.u_ram.memory[44] = encode_r(3'b000, 4'd5, 4'd14, 4'd0, 3'b100);
+        // 45: r15(PC)読み出し (ADD r8, r15, 0) -> 現在のフェッチPC (46)
+        u_soc.u_ram.memory[45] = encode_r(3'b000, 4'd8, 4'd15, 4'd0, 3'b100);
 
         // リセット解除
         #20;
         rst = 0;
 
-        // サイクル進行および外部UART送信
-        #380;
         // 外部から 0x5A ('Z') をUART RXに入力
+        // ポーリングループで待つので、送信タイミングは早めでも問題ない
         send_uart_byte(8'h5A);
 
-        #500;
+        // ★ループ分の余裕を持たせて延長 (#380+#500 → #1500)
+        #1500;
 
         $display("=== k16 CPU 検証結果 (ノイマン型 + MMIO + 特殊レジスタ完全検証) ===");
 
@@ -259,9 +267,9 @@ module tb_cpu;
             errors = errors + 1;
         end
 
-        // 検証11: 特殊レジスタ r15 (PC値読み出し)
-        if (u_soc.u_cpu.u_regfile.regs[8] === 16'd44) begin
-            $display("[PASS] 特殊レジスタ r15 (PC読み出し -> 44)");
+        // 検証11: 特殊レジスタ r15 (PC値読み出し) ★期待値を44→46に変更
+        if (u_soc.u_cpu.u_regfile.regs[8] === 16'd46) begin
+            $display("[PASS] 特殊レジスタ r15 (PC読み出し -> 46)");
         end else begin
             $display("[FAIL] 特殊レジスタ r15 (PC読み出し)");
             errors = errors + 1;
