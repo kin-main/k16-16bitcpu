@@ -4,7 +4,7 @@ module ram #(
     input  wire        clk,
     input  wire [13:0] addr,
     input  wire [23:0] wdata,
-    output wire [23:0] rdata,   // ★ reg → wire
+    output reg  [23:0] rdata,  
     input  wire        we
 );
     reg [23:0] memory [0:16383];
