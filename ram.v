@@ -2,13 +2,12 @@ module ram #(
     parameter INIT_FILE = "firmware.hex"
 )(
     input  wire        clk,
-    input  wire [13:0] addr,   // ★ 14bit幅 (16Kワード)
+    input  wire [13:0] addr,
     input  wire [23:0] wdata,
-    output reg  [23:0] rdata,  // ★ 同期読み出しのため reg
+    output wire [23:0] rdata,   // ★ reg → wire
     input  wire        we
 );
-
-    reg [23:0] memory [0:16383]; // ★ 16384ワード (BSRAM内に収まるサイズ)
+    reg [23:0] memory [0:16383];
 
     initial begin
         if (INIT_FILE != "") begin
@@ -16,12 +15,13 @@ module ram #(
         end
     end
 
-    // クロック同期読み出し・書き込み
+    // 書き込みは従来通り同期
     always @(posedge clk) begin
         if (we) begin
             memory[addr] <= wdata;
         end
-        rdata <= memory[addr];
     end
 
+    // 読み出しは組み合わせ（同サイクルで反映）
+    assign rdata = memory[addr];
 endmodule
