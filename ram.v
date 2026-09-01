@@ -4,7 +4,7 @@ module ram #(
     input  wire        clk,
     input  wire [13:0] addr,
     input  wire [23:0] wdata,
-    output wire [23:0] rdata,   // ★ reg → wire
+    output reg  [23:0] rdata,
     input  wire        we
 );
     reg [23:0] memory [0:16383];
@@ -15,13 +15,10 @@ module ram #(
         end
     end
 
-    // 書き込みは従来通り同期
     always @(posedge clk) begin
         if (we) begin
             memory[addr] <= wdata;
         end
+        rdata <= memory[addr];
     end
-
-    // 読み出しは組み合わせ（同サイクルで反映）
-    assign rdata = memory[addr];
 endmodule
