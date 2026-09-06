@@ -1,6 +1,6 @@
 /*==============================================================================
  * モジュール名 : cpu
- * 概要         : k16 16bit RISC 3段(IF/ID/EX) パイプライン CPU コア
+ * 概要         : k16 16bit RISC 3段(IF/ID/EX) パイプライン CPU コア (同期BRAM完全対応)
  *============================================================================*/
 
 module cpu (
@@ -63,7 +63,7 @@ module cpu (
     );
 
     //==========================================================
-    // Stage 2 -> Stage 3: ID/EX パイプラインレジスタ (IDとEXの分断)
+    // Stage 2 -> Stage 3: ID/EX パイプラインレジスタ
     //==========================================================
     reg [2:0]  id_ex_cond;
     reg [3:0]  id_ex_rd;
@@ -79,13 +79,41 @@ module cpu (
     reg [15:0] id_ex_rddata_a;
     reg [15:0] id_ex_rddata_b;
 
-    // EXステージのメモリバブル制御用信号
+    // EXステージのメモリアクセス発生判定
     wire ex_is_mem_access;
 
+    // 前方宣言 (フォワーディング & レジスタ書き込みで参照)
+    wire        ex_cond_match;
+    reg         load_active_q;
+    reg [3:0]   load_rd_q;
+    wire        wtenable;
+    wire [3:0]  wtaddr;
+    wire [15:0] wtdata;
+    reg [3:0]   prev_wtaddr;
+    reg [15:0]  prev_wtdata;
+    reg         prev_wtenable;
+
+    // Load命令実行中のストール制御信号
+    wire load_stall = ex_cond_match && id_ex_is_load;
+
     always @(posedge clk or posedge rst) begin
-        if (rst || ex_is_mem_access) begin
-            // リセット時およびデータアクセスに伴うバブル発生時は NOP 化
+        if (rst) begin
             id_ex_cond        <= 3'b100; // Condition: Never
+            id_ex_rd          <= 4'd0;
+            id_ex_rs1         <= 4'd0;
+            id_ex_rs2         <= 4'd0;
+            id_ex_imm         <= 16'd0;
+            id_ex_alu_funct   <= 3'd0;
+            id_ex_is_load     <= 1'b0;
+            id_ex_is_store    <= 1'b0;
+            id_ex_alu_src_imm <= 1'b0;
+            id_ex_reg_write   <= 1'b0;
+            id_ex_flag_write  <= 1'b0;
+            id_ex_rddata_a    <= 16'd0;
+            id_ex_rddata_b    <= 16'd0;
+        end else if (load_stall) begin
+            // [Loadデータバブル]: Load実行時は次サイクルの書き戻し衝突を防ぐため EX に NOP を挿入
+            id_ex_cond        <= 3'b100;
             id_ex_rd          <= 4'd0;
             id_ex_rs1         <= 4'd0;
             id_ex_rs2         <= 4'd0;
@@ -118,7 +146,6 @@ module cpu (
     //==========================================================
     // Stage 3: EX (実行 / 条件判定 / ALU / メモリアクセス)
     //==========================================================
-    wire ex_cond_match;
     wire zf, cf, nf;
 
     // 条件判定
@@ -134,9 +161,18 @@ module cpu (
     assign ex_is_mem_access = ex_cond_match && (id_ex_is_load || id_ex_is_store);
 
     // --- フォワーディング (RAWハザード回避) ---
-    // 直前に書き込まれたレジスタ値をバイパス
-    wire [15:0] fwd_data_a = (prev_wtenable && (prev_wtaddr == id_ex_rs1)) ? prev_wtdata : id_ex_rddata_a;
-    wire [15:0] fwd_data_b = (prev_wtenable && (prev_wtaddr == id_ex_rs2)) ? prev_wtdata : id_ex_rddata_b;
+    // 1) 1サイクル遅延でBRAM/MMIOから届いたLoadデータの直接バイパス (load_active_q)
+    // 2) r13[7:0]へ書き込まれるメモリ上位8bit(topin)の直接バイパス
+    // 3) 直前に書き込まれたレジスタ値のバイパス (prev_wtenable)
+    wire [15:0] fwd_r13_a = load_active_q ? {id_ex_rddata_a[15:8], mem_rdata[23:16]} : id_ex_rddata_a;
+    wire [15:0] fwd_r13_b = load_active_q ? {id_ex_rddata_b[15:8], mem_rdata[23:16]} : id_ex_rddata_b;
+
+    wire [15:0] fwd_data_a = (load_active_q && (load_rd_q == id_ex_rs1) && (id_ex_rs1 != 4'd0) && (id_ex_rs1 != 4'd14)) ? wtdata :
+                             (load_active_q && (id_ex_rs1 == 4'd13)) ? fwd_r13_a :
+                             (prev_wtenable && (prev_wtaddr == id_ex_rs1)) ? prev_wtdata : id_ex_rddata_a;
+    wire [15:0] fwd_data_b = (load_active_q && (load_rd_q == id_ex_rs2) && (id_ex_rs2 != 4'd0) && (id_ex_rs2 != 4'd14)) ? wtdata :
+                             (load_active_q && (id_ex_rs2 == 4'd13)) ? fwd_r13_b :
+                             (prev_wtenable && (prev_wtaddr == id_ex_rs2)) ? prev_wtdata : id_ex_rddata_b;
 
     wire [15:0] alu_in_a = fwd_data_a;
     wire [15:0] alu_in_b = id_ex_alu_src_imm ? id_ex_imm : fwd_data_b;
@@ -163,14 +199,29 @@ module cpu (
     wire [15:0] shared_addr = ex_is_mem_access ? alu_result : pc;
     assign mem_addr = shared_addr;
 
+    // データアクセスの翌サイクル判定用レジスタ
+    reg data_access_q;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            data_access_q <= 1'b0;
+        end else begin
+            data_access_q <= ex_is_mem_access;
+        end
+    end
+
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             if_id_ir <= NOP_INST;
-        end else if (ex_is_mem_access) begin
-            // [調停バブル]: バスをデータアクセスに使用したため次サイクルに NOP 挿入
-            if_id_ir <= NOP_INST;
         end else if (wtenable && (wtaddr == 4'd15)) begin
             // [分岐フラッシュ]: PC(r15)書き込み時、先読みした命令をNOP化
+            if_id_ir <= NOP_INST;
+        end else if (load_stall) begin
+            // [Load時フェッチストール]: Load命令実行中は IF/ID 命令レジスタを保持
+            if_id_ir <= if_id_ir;
+        end else if (data_access_q) begin
+            // [バス調停バブル]: 前サイクルでデータアクセスを行ったため、
+            // 今 BRAM から返ってきたデータ(Loadデータ等)を無視して NOP 挿入
             if_id_ir <= NOP_INST;
         end else begin
             if_id_ir <= mem_rdata;
@@ -180,16 +231,15 @@ module cpu (
     //==========================================================
     // BRAM 1サイクル遅延吸収論理 (Load データの書き戻し同期)
     //==========================================================
-    reg       load_active_q;  // 1サイクル前に Load が実行されたかのフラグ
-    reg [3:0] load_rd_q;      // 1サイクル前の Load 先レジスタ番号
-
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             load_active_q <= 1'b0;
             load_rd_q     <= 4'd0;
         end else begin
             load_active_q <= ex_cond_match && id_ex_is_load;
-            load_rd_q     <= id_ex_rd;
+            if (ex_cond_match && id_ex_is_load) begin
+                load_rd_q <= id_ex_rd;
+            end
         end
     end
 
@@ -197,9 +247,9 @@ module cpu (
     // レジスタファイル書き込み & メモリ出力
     //==========================================================
     // 通常書き込み(ALU演算結果) と 1サイクル遅延して返ってきた Load データの書き込みを統合
-    wire        wtenable  = (ex_cond_match && id_ex_reg_write && !id_ex_is_load) || load_active_q;
-    wire [3:0]  wtaddr    = load_active_q ? load_rd_q : id_ex_rd;
-    wire [15:0] wtdata    = load_active_q ? mem_rdata[15:0] : alu_result;
+    assign wtenable = (ex_cond_match && id_ex_reg_write && !id_ex_is_load) || load_active_q;
+    assign wtaddr   = load_active_q ? load_rd_q : id_ex_rd;
+    assign wtdata   = load_active_q ? mem_rdata[15:0] : alu_result;
     wire [7:0]  topout;
 
     regfile u_regfile (
@@ -229,10 +279,6 @@ module cpu (
     //==========================================================
     // フォワーディング用書き込み履歴更新
     //==========================================================
-    reg [3:0]  prev_wtaddr;
-    reg [15:0] prev_wtdata;
-    reg        prev_wtenable;
-
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             prev_wtaddr   <= 4'd0;

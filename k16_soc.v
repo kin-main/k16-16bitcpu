@@ -30,12 +30,22 @@ module k16_soc #(
     // アドレスデコード: 0xFF00以上はMMIO領域
     wire is_mmio = (mem_addr >= 16'hFF00);
 
+    // 読み出しバス選択信号の1サイクル遅延保持 (BRAM/同期MMIOの1サイクル遅延に合わせる)
+    reg is_mmio_q;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            is_mmio_q <= 1'b0;
+        end else begin
+            is_mmio_q <= is_mmio;
+        end
+    end
+
     // 書き込みイネーブルの振り分け
     wire ram_we  = mem_we && (!is_mmio);
     wire mmio_we = mem_we && is_mmio;
 
-    // 読み出しデータのマルチプレクス (ノイマン型単一バスへ返却)
-    assign mem_rdata = is_mmio ? mmio_rdata : ram_rdata;
+    // 読み出しデータのマルチプレクス (前サイクルの要求先に応じて選択)
+    assign mem_rdata = is_mmio_q ? mmio_rdata : ram_rdata;
 
     //==========================================================================
     // 1. k16 CPU コア

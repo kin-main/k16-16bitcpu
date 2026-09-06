@@ -62,6 +62,9 @@ module tb_cpu;
         end
     endtask
 
+    always @(posedge clk) begin
+        if (!rst) $display("CLK: PC=%d, mem_addr=%h, ir=%h, load_q=%b, load_rd_q=%d, r3=%d, r13=%h", u_soc.u_cpu.pc, u_soc.mem_addr, u_soc.u_cpu.if_id_ir, u_soc.u_cpu.load_active_q, u_soc.u_cpu.load_rd_q, u_soc.u_cpu.u_regfile.regs[3], u_soc.u_cpu.u_regfile.regs[13]);
+    end
     initial begin
         // 波形ダンプ
         $dumpfile("tb_cpu.vcd");
@@ -70,9 +73,6 @@ module tb_cpu;
         clk = 0;
         rst = 1;
         uart_rx = 1;
-    end
-
-    initial begin
 
         // メモリ初期化 (全ゼロ / NOP)
         for (integer i = 0; i < 65536; i = i + 1) begin

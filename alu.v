@@ -60,13 +60,8 @@ module alu (
             end
 
             // SUB
-            // A - B = A + ~B + 1
-            // temp[16] = Carry (Borrowなし)
             3'b101: begin
-                temp   = {1'b0, A}
-                       + {1'b0, ~B}
-                       + 17'b1;
-
+                temp   = {1'b0, A} - {1'b0, B};
                 result = temp[15:0];
             end
 

@@ -76,35 +76,30 @@ module mmio #(
     end
 
     //==========================================================================
-    // MMIO レジスタ読み出し制御
+    // MMIO レジスタ読み出し制御 (同期読み出し: BRAMと同等の1サイクル遅延)
     //==========================================================================
-    always @(*) begin
-        case (addr)
-            ADDR_UART_DATA: begin
-                rdata = {16'd0, rx_data};
-            end
-
-            ADDR_UART_STATUS: begin
-                rdata = {22'd0, rx_ready, tx_busy};
-            end
-
-            default: begin
-                rdata = 24'd0;
-            end
-        endcase
-    end
-
-    // 受信データ読み出し時のクリアパルス生成
     always @(posedge clk or posedge rst) begin
         if (rst) begin
+            rdata    <= 24'd0;
             rx_clear <= 1'b0;
         end else begin
-            // 0xFF00 (UART_DATA) を読み出しているサイクルにクリアパルスをアサート
-            if (!we && (addr == ADDR_UART_DATA)) begin
-                rx_clear <= 1'b1;
-            end else begin
-                rx_clear <= 1'b0;
-            end
+            rx_clear <= 1'b0;
+            case (addr)
+                ADDR_UART_DATA: begin
+                    rdata <= {16'd0, rx_data};
+                    if (!we) begin
+                        rx_clear <= 1'b1;
+                    end
+                end
+
+                ADDR_UART_STATUS: begin
+                    rdata <= {22'd0, rx_ready, tx_busy};
+                end
+
+                default: begin
+                    rdata <= 24'd0;
+                end
+            endcase
         end
     end
 
