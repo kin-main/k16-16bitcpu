@@ -268,11 +268,13 @@ module tb_cpu;
             errors = errors + 1;
         end
 
-        // 検証11: 特殊レジスタ r15 (PC値読み出し) ★期待値を44→46に変更
-        if (u_soc.u_cpu.u_regfile.regs[8] === 16'd46) begin
-            $display("[PASS] 特殊レジスタ r15 (PC読み出し -> 46)");
+        // 検証11: 特殊レジスタ r15 (PC値読み出し)
+        // ★修正版パイプライン: r15読み出しはIDステージで捕捉したフェッチPCを返す。
+        //   mem[39]のLoadストール後、mem[45]実行時のフェッチPC = 47
+        if (u_soc.u_cpu.u_regfile.regs[8] === 16'd47) begin
+            $display("[PASS] 特殊レジスタ r15 (PC読み出し -> 47)");
         end else begin
-            $display("[FAIL] 特殊レジスタ r15 (PC読み出し)");
+            $display("[FAIL] 特殊レジスタ r15 (PC読み出し) 実際=%0d 期待=47", u_soc.u_cpu.u_regfile.regs[8]);
             errors = errors + 1;
         end
 
