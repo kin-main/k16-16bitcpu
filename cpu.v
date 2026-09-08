@@ -96,6 +96,18 @@ module cpu (
     // Load命令実行中のストール制御信号
     wire load_stall = ex_cond_match && id_ex_is_load;
 
+    // PC書き込み(分岐成立)の組み合わせ検出
+    // ALU命令による r15 書き込み、または Load(r15) の1サイクル遅延書き戻しで1になる
+    wire pc_write_now = wtenable && (wtaddr == 4'd15);
+
+    // Loadストール中に取りこぼれる「フェッチ済みのL+2命令」退避レジスタ
+    reg  [23:0] pend_inst;
+    reg         pend_valid;
+
+    // 分岐フラッシュ2サイクル目用
+    // (フェッチ→BRAM出力→IF/ID→ID/EX の深さ分、違反経路を廃棄する)
+    reg         branch_flush_q;
+
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             id_ex_cond        <= 3'b100; // Condition: Never
@@ -111,8 +123,10 @@ module cpu (
             id_ex_flag_write  <= 1'b0;
             id_ex_rddata_a    <= 16'd0;
             id_ex_rddata_b    <= 16'd0;
-        end else if (load_stall) begin
-            // [Loadデータバブル]: Load実行時は次サイクルの書き戻し衝突を防ぐため EX に NOP を挿入
+        end else if (load_stall || pc_write_now) begin
+            // [Loadデータバブル / 分岐フラッシュ]:
+            // - Load実行時は次サイクルの書き戻し衝突を防ぐため EX に NOP を挿入
+            // - PC書き込み(分岐)成立時は、IF/IDから流れてくる分岐直後のパス命令(J+1)を NOP 化
             id_ex_cond        <= 3'b100;
             id_ex_rd          <= 4'd0;
             id_ex_rs1         <= 4'd0;
@@ -161,18 +175,22 @@ module cpu (
     assign ex_is_mem_access = ex_cond_match && (id_ex_is_load || id_ex_is_store);
 
     // --- フォワーディング (RAWハザード回避) ---
+    // r14(フラグ)はIDステージでキャプチャせず、EXステージでライブ読み出しする。
+    // (直前命令のフラグ更新が1命令分古くなるスタールを防ぐ)
+    wire [15:0] ex_rddata_a = (id_ex_rs1 == 4'd14) ? {13'b0, nf, cf, zf} : id_ex_rddata_a;
+    wire [15:0] ex_rddata_b = (id_ex_rs2 == 4'd14) ? {13'b0, nf, cf, zf} : id_ex_rddata_b;
     // 1) 1サイクル遅延でBRAM/MMIOから届いたLoadデータの直接バイパス (load_active_q)
     // 2) r13[7:0]へ書き込まれるメモリ上位8bit(topin)の直接バイパス
     // 3) 直前に書き込まれたレジスタ値のバイパス (prev_wtenable)
-    wire [15:0] fwd_r13_a = load_active_q ? {id_ex_rddata_a[15:8], mem_rdata[23:16]} : id_ex_rddata_a;
-    wire [15:0] fwd_r13_b = load_active_q ? {id_ex_rddata_b[15:8], mem_rdata[23:16]} : id_ex_rddata_b;
+    wire [15:0] fwd_r13_a = load_active_q ? {ex_rddata_a[15:8], mem_rdata[23:16]} : ex_rddata_a;
+    wire [15:0] fwd_r13_b = load_active_q ? {ex_rddata_b[15:8], mem_rdata[23:16]} : ex_rddata_b;
 
     wire [15:0] fwd_data_a = (load_active_q && (load_rd_q == id_ex_rs1) && (id_ex_rs1 != 4'd0) && (id_ex_rs1 != 4'd14)) ? wtdata :
                              (load_active_q && (id_ex_rs1 == 4'd13)) ? fwd_r13_a :
-                             (prev_wtenable && (prev_wtaddr == id_ex_rs1)) ? prev_wtdata : id_ex_rddata_a;
+                             (prev_wtenable && (prev_wtaddr == id_ex_rs1)) ? prev_wtdata : ex_rddata_a;
     wire [15:0] fwd_data_b = (load_active_q && (load_rd_q == id_ex_rs2) && (id_ex_rs2 != 4'd0) && (id_ex_rs2 != 4'd14)) ? wtdata :
                              (load_active_q && (id_ex_rs2 == 4'd13)) ? fwd_r13_b :
-                             (prev_wtenable && (prev_wtaddr == id_ex_rs2)) ? prev_wtdata : id_ex_rddata_b;
+                             (prev_wtenable && (prev_wtaddr == id_ex_rs2)) ? prev_wtdata : ex_rddata_b;
 
     wire [15:0] alu_in_a = fwd_data_a;
     wire [15:0] alu_in_b = id_ex_alu_src_imm ? id_ex_imm : fwd_data_b;
@@ -213,16 +231,21 @@ module cpu (
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             if_id_ir <= NOP_INST;
-        end else if (wtenable && (wtaddr == 4'd15)) begin
-            // [分岐フラッシュ]: PC(r15)書き込み時、先読みした命令をNOP化
+        end else if (pc_write_now) begin
+            // [分岐フラッシュ 1/2]: PC書き込みサイクル。
+            // バスから返ってくるのは分岐のフォールスルー先(J+2)なので廃棄
             if_id_ir <= NOP_INST;
         end else if (load_stall) begin
             // [Load時フェッチストール]: Load命令実行中は IF/ID 命令レジスタを保持
             if_id_ir <= if_id_ir;
-        end else if (data_access_q) begin
-            // [バス調停バブル]: 前サイクルでデータアクセスを行ったため、
-            // 今 BRAM から返ってきたデータ(Loadデータ等)を無視して NOP 挿入
+        end else if (branch_flush_q) begin
+            // [分岐フラッシュ 2/2]: 分岐実行サイクルにフェッチされた J+3 を廃棄
             if_id_ir <= NOP_INST;
+        end else if (data_access_q) begin
+            // [バス調停バブル]: データアクセスの翌サイクル。
+            // Loadストール時に退避した L+2 命令があればここで IF/ID へ復帰。
+            // なければ(BRAMから返るのはストア先/ロードデータのゴミ) NOP 挿入
+            if_id_ir <= pend_valid ? pend_inst : NOP_INST;
         end else begin
             if_id_ir <= mem_rdata;
         end
@@ -240,6 +263,37 @@ module cpu (
             if (ex_cond_match && id_ex_is_load) begin
                 load_rd_q <= id_ex_rd;
             end
+        end
+    end
+
+    //==========================================================
+    // Loadストール時の後続命令退避 (L+2 取りこぼし対策)
+    //==========================================================
+    // LoadがEXで実行されるサイクル、mem_rdataには「前サイクルにフェッチ
+    // 済みの L+2 命令」が乗っている。IF/IDを L+1 でホールドしている間に
+    // ここへ退避し、翌サイクル(データアクセス翌サイクル)に IF/ID へ復帰させる。
+    // 前サイクルがバス占有(ストア等)だった場合はフェッチが発生していないため
+    // 退避せず、pc_hold により L+2 以降が後から再フェッチされる。
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            pend_valid <= 1'b0;
+            pend_inst  <= NOP_INST;
+        end else if (load_stall && !data_access_q) begin
+            pend_valid <= 1'b1;
+            pend_inst  <= mem_rdata;
+        end else begin
+            pend_valid <= 1'b0;
+        end
+    end
+
+    //==========================================================
+    // 分岐フラッシュ2サイクル目
+    //==========================================================
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            branch_flush_q <= 1'b0;
+        end else begin
+            branch_flush_q <= pc_write_now;
         end
     end
 
