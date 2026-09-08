@@ -33,7 +33,11 @@ module mmio #(
     localparam ADDR_UART_STATUS = 16'hFF01;
 
     // UART 内部配線
-    wire [7:0] tx_data  = wdata[7:0];
+    // tx_hold: 書き込みサイクルにラッチした送信データ。
+    // tx_startは1サイクル遅延パルスのため、tx_dataをバスの組み合わせ値のまま
+    // 渡すと、uartがラッチするタイミングでバスは次命令の内容に変わってしまう。
+    // ここでデータも一緒にレジスタ保存して渡す。
+    reg [7:0]  tx_hold;
     reg        tx_start;
     wire       tx_busy;
     wire       tx_done;
@@ -48,7 +52,7 @@ module mmio #(
     ) u_uart (
         .clk      (clk),
         .rst      (rst),
-        .tx_data  (tx_data),
+        .tx_data  (tx_hold),
         .tx_start (tx_start),
         .uart_tx  (uart_tx),
         .tx_busy  (tx_busy),
@@ -65,12 +69,14 @@ module mmio #(
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             tx_start <= 1'b0;
+            tx_hold  <= 8'd0;
         end else begin
             tx_start <= 1'b0;
 
-            // 0xFF00への書き込みで送信トリガーを生成
+            // 0xFF00への書き込みで送信トリガーを生成 (データも同時にラッチ)
             if (we && (addr == ADDR_UART_DATA) && !tx_busy) begin
                 tx_start <= 1'b1;
+                tx_hold  <= wdata[7:0];
             end
         end
     end
