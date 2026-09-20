@@ -184,7 +184,7 @@ module cpu (
          (load_rd_q == id_ex_rs1) &&
          (id_ex_rs1 != 4'd0) &&
          (id_ex_rs1 != 4'd14))
-        ? wtdata
+        ? mem_rdata[15:0]
 
         : (load_active_q &&
            (id_ex_rs1 == 4'd13))
@@ -204,7 +204,7 @@ module cpu (
          (load_rd_q == id_ex_rs2) &&
          (id_ex_rs2 != 4'd0) &&
          (id_ex_rs2 != 4'd14))
-        ? wtdata
+        ? mem_rdata[15:0]
 
         : (load_active_q &&
            (id_ex_rs2 == 4'd13))
