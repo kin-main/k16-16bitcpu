@@ -10,6 +10,8 @@ module tb_cpu;
     // パラメータ: シミュレーション高速化のため 1bit = 10クロック
     localparam CLKS_PER_BIT = 10;
 
+    wire [7:0] led;
+
     // SoC インスタンス (CPU + RAM + MMIO/UART)
     // INIT_FILE="firmware.hex" が存在する場合、$readmemh で自動ロード
     // 空文字列を指定した場合は manual 初期化ブロック (後段) のみが有効
@@ -20,7 +22,8 @@ module tb_cpu;
         .clk     (clk),
         .rst     (rst),
         .uart_rx (uart_rx),
-        .uart_tx (uart_tx)
+        .uart_tx (uart_tx),
+        .led     (led)
     );
 
     // クロック生成 (10ns周期 = 100MHz)

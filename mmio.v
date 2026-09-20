@@ -9,6 +9,9 @@
  * - 0xFF01 : UART_STATUS
  *            [Read]  ビット0: tx_busy  (1: 送信中, 0: 送信可能/アイドル)
  *                    ビット1: rx_ready (1: 未読受信データあり, 0: なし)
+ * - 0xFF02 : LED_DATA
+ *            [Write] LED出力データ (下位8bit) を書き込み、物理LEDを制御
+ *            [Read]  現在のLED出力値 (下位8bit) を読み出し
  *============================================================================*/
 
 module mmio #(
@@ -25,12 +28,16 @@ module mmio #(
 
     // 外部シリアルインターフェース
     input  wire        uart_rx,   // UART 受信ピン
-    output wire        uart_tx    // UART 送信ピン
+    output wire        uart_tx,   // UART 送信ピン
+
+    // LEDインターフェース
+    output reg  [7:0]  led        // LED出力ピン (0xFF02)
 );
 
     // MMIO レジスタアドレス定数
     localparam ADDR_UART_DATA   = 16'hFF00;
     localparam ADDR_UART_STATUS = 16'hFF01;
+    localparam ADDR_LED_DATA    = 16'hFF02;
 
     // UART 内部配線
     // tx_hold: 書き込みサイクルにラッチした送信データ。
@@ -70,6 +77,7 @@ module mmio #(
         if (rst) begin
             tx_start <= 1'b0;
             tx_hold  <= 8'd0;
+            led      <= 8'd0;
         end else begin
             tx_start <= 1'b0;
 
@@ -77,6 +85,11 @@ module mmio #(
             if (we && (addr == ADDR_UART_DATA) && !tx_busy) begin
                 tx_start <= 1'b1;
                 tx_hold  <= wdata[7:0];
+            end
+
+            // 0xFF02への書き込みでLED出力値を更新
+            if (we && (addr == ADDR_LED_DATA)) begin
+                led <= wdata[7:0];
             end
         end
     end
@@ -100,6 +113,10 @@ module mmio #(
 
                 ADDR_UART_STATUS: begin
                     rdata <= {22'd0, rx_ready, tx_busy};
+                end
+
+                ADDR_LED_DATA: begin
+                    rdata <= {16'd0, led};
                 end
 
                 default: begin

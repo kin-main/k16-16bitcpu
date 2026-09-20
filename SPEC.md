@@ -60,7 +60,7 @@ k16は以下のポリシーでこれを調停する:
 |---|---|---|---|---|
 | `0xFF00` | `UART_DATA` | R/W | `[7:0]` | **Write (Store)**: 送信データ(下位8bit)を書き込み、UART TX送信を開始<br>**Read (Load)**: 受信データ(下位8bit)を読み出し、`rx_ready` フラグをクリア |
 | `0xFF01` | `UART_STATUS` | R | `[1:0]` | **Read (Load)**: ステータスフラグ取得<br>・`bit 0` (`tx_busy`): 1=送信中, 0=送信可能/アイドル<br>・`bit 1` (`rx_ready`): 1=未読受信データあり, 0=なし |
-| `0xFF02` | `UART_BAUD` | R/W | `[15:0]` | (予約/拡張用) ボーレート設定レジスタ |
+| `0xFF02` | `LED_DATA` | R/W | `[7:0]` | **Write (Store)**: 物理LED出力データ(下位8bit)を更新<br>**Read (Load)**: 現在のLED出力値(下位8bit)を取得 |
 
 ---
 

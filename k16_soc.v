@@ -12,7 +12,10 @@ module k16_soc #(
 
     // シリアル通信ピン
     input  wire uart_rx,
-    output wire uart_tx
+    output wire uart_tx,
+
+    // LED出力ピン (MMIO 0xFF02)
+    output wire [7:0] led
 );
 
     //==========================================================================
@@ -86,7 +89,8 @@ module k16_soc #(
         .rdata    (mmio_rdata),
         .we       (mmio_we),
         .uart_rx  (uart_rx),
-        .uart_tx  (uart_tx)
+        .uart_tx  (uart_tx),
+        .led      (led)
     );
 
 endmodule

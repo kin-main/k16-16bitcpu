@@ -14,6 +14,8 @@ module tb_cpu;
     // SoC
     //==========================================================================
 
+    wire [7:0] led;
+
     k16_soc #(
         .CLKS_PER_BIT (CLKS_PER_BIT),
         .INIT_FILE    ("")
@@ -21,7 +23,8 @@ module tb_cpu;
         .clk     (clk),
         .rst     (rst),
         .uart_rx (uart_rx),
-        .uart_tx (uart_tx)
+        .uart_tx (uart_tx),
+        .led     (led)
     );
 
     //==========================================================================
