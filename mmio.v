@@ -34,13 +34,15 @@ module mmio #(
 
     // UART 内部配線
     wire [7:0] tx_data  = wdata[7:0];
-    reg        tx_start;
     wire       tx_busy;
     wire       tx_done;
 
     wire [7:0] rx_data;
     wire       rx_ready;
     reg        rx_clear;
+
+    // 0xFF00への書き込みで送信トリガーを生成 (組み合わせ回路)
+    wire tx_start = we && (addr == ADDR_UART_DATA) && !tx_busy;
 
     // UART モジュールのインスタンス化
     uart #(
@@ -58,22 +60,6 @@ module mmio #(
         .rx_ready (rx_ready),
         .rx_clear (rx_clear)
     );
-
-    //==========================================================================
-    // MMIO レジスタ書き込み制御
-    //==========================================================================
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            tx_start <= 1'b0;
-        end else begin
-            tx_start <= 1'b0;
-
-            // 0xFF00への書き込みで送信トリガーを生成
-            if (we && (addr == ADDR_UART_DATA) && !tx_busy) begin
-                tx_start <= 1'b1;
-            end
-        end
-    end
 
     //==========================================================================
     // MMIO レジスタ読み出し制御 (同期読み出し: BRAMと同等の1サイクル遅延)

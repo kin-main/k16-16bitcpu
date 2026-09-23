@@ -43,7 +43,7 @@ module uart #(
     reg        tx_out;
 
     assign uart_tx = tx_out;
-    assign tx_busy = (tx_state != TX_IDLE);
+    assign tx_busy = (tx_state != TX_IDLE) || tx_start;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin

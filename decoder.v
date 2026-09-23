@@ -38,8 +38,9 @@ module decoder (
     assign alu_src_imm = is_alu_imm || (op == 2'b11);
 
     // レジスタ書き込み・フラグ更新要求（条件成立時に有効化される）
+    // PC(r15)への書き込み(分岐)ではフラグを破棄・保持する
     assign reg_write  = is_alu_reg || is_alu_imm || is_load;
-    assign flag_write = is_alu_reg || is_alu_imm;
+    assign flag_write = (is_alu_reg || is_alu_imm) && (rd != 4'd15);
 
     // 即値生成 (16bit)
     always @(*) begin

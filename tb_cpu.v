@@ -44,15 +44,15 @@ module tb_cpu;
 
     // 外部からUART RXピンに1バイト送信するタスク (8-N-1)
     task send_uart_byte(input [7:0] data);
-        integer i;
+        reg [3:0] idx;
         begin
             // スタートビット (Low)
             uart_rx = 1'b0;
             #(CLKS_PER_BIT * 10);
 
             // データビット (LSBファースト)
-            for (i = 0; i < 8; i = i + 1) begin
-                uart_rx = data[i];
+            for (idx = 0; idx < 8; idx = idx + 1) begin
+                uart_rx = data[idx];
                 #(CLKS_PER_BIT * 10);
             end
 
@@ -63,9 +63,9 @@ module tb_cpu;
     endtask
 
     initial begin
-        // 波形ダンプ
-        $dumpfile("tb_cpu.vcd");
-        $dumpvars(0, tb_cpu);
+        // 波形ダンプ (無効化)
+        // $dumpfile("tb_cpu.vcd");
+        // $dumpvars(0, tb_cpu);
 
         clk = 0;
         rst = 1;
@@ -74,8 +74,8 @@ module tb_cpu;
 
     initial begin
 
-        // メモリ初期化 (全ゼロ / NOP)
-        for (integer i = 0; i < 65536; i = i + 1) begin
+        // メモリ初期化 (全ゼロ / NOP: 16Kワード)
+        for (integer i = 0; i < 16384; i = i + 1) begin
             u_soc.u_ram.memory[i] = 24'b100_00_0000_0000_0000_0000_000; // NOP
         end
 
@@ -180,11 +180,14 @@ module tb_cpu;
         rst = 0;
 
         // 外部から 0x5A ('Z') をUART RXに入力
-        // ポーリングループで待つので、送信タイミングは早めでも問題ない
+        #500;
+        $display("Starting send_uart_byte...");
         send_uart_byte(8'h5A);
+        $display("Finished send_uart_byte!");
 
-        // ★ノイマン調停バブルを含めた全命令完了待機 (#3000 → #6000)
-        #6000;
+        // ★ノイマン調停バブルを含めた全命令完了待機
+        #1500;
+        $display("Simulation finished normally, printing results...");
 
         $display("=== k16 CPU 検証結果 (ノイマン型 + MMIO + 特殊レジスタ完全検証) ===");
 
