@@ -40,18 +40,16 @@ module mmio #(
     localparam ADDR_LED_DATA    = 16'hFF02;
 
     // UART 内部配線
-    // tx_hold: 書き込みサイクルにラッチした送信データ。
-    // tx_startは1サイクル遅延パルスのため、tx_dataをバスの組み合わせ値のまま
-    // 渡すと、uartがラッチするタイミングでバスは次命令の内容に変わってしまう。
-    // ここでデータも一緒にレジスタ保存して渡す。
-    reg [7:0]  tx_hold;
-    reg        tx_start;
+    wire [7:0] tx_data  = wdata[7:0];
     wire       tx_busy;
     wire       tx_done;
 
     wire [7:0] rx_data;
     wire       rx_ready;
     reg        rx_clear;
+
+    // 0xFF00への書き込みで送信トリガーを生成 (組み合わせ回路)
+    wire tx_start = we && (addr == ADDR_UART_DATA) && !tx_busy;
 
     // UART モジュールのインスタンス化
     uart #(
@@ -69,30 +67,6 @@ module mmio #(
         .rx_ready (rx_ready),
         .rx_clear (rx_clear)
     );
-
-    //==========================================================================
-    // MMIO レジスタ書き込み制御
-    //==========================================================================
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            tx_start <= 1'b0;
-            tx_hold  <= 8'd0;
-            led      <= 8'd0;
-        end else begin
-            tx_start <= 1'b0;
-
-            // 0xFF00への書き込みで送信トリガーを生成 (データも同時にラッチ)
-            if (we && (addr == ADDR_UART_DATA) && !tx_busy) begin
-                tx_start <= 1'b1;
-                tx_hold  <= wdata[7:0];
-            end
-
-            // 0xFF02への書き込みでLED出力値を更新
-            if (we && (addr == ADDR_LED_DATA)) begin
-                led <= wdata[7:0];
-            end
-        end
-    end
 
     //==========================================================================
     // MMIO レジスタ読み出し制御 (同期読み出し: BRAMと同等の1サイクル遅延)

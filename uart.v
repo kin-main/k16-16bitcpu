@@ -43,10 +43,7 @@ module uart #(
     reg        tx_out;
 
     assign uart_tx = tx_out;
-    // tx_start (送信開始パルス) も busy に含める。
-    // tx_startはmmioで1サイクル遅延して入力されるため、ステータス読み出しと
-    // 同サイクルに送信開始を正しく報告できる (送信直後のポーリング対策)。
-    assign tx_busy = (tx_state != TX_IDLE) | tx_start;
+    assign tx_busy = (tx_state != TX_IDLE) || tx_start;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin

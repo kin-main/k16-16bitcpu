@@ -53,14 +53,17 @@ module regfile(
 
     // r0は常に0
     // r14はALUフラグを直接返す
+    // 同一サイクル書き込み(wtenable)時は書き込みデータをバイパス (Write-First)
     assign rddata_a =
         (rdaddr_a == 4'd0)  ? 16'h0000 :
         (rdaddr_a == 4'd14) ? {13'b0, nf, cf, zf} :
+        (wtenable && (wtaddr == rdaddr_a)) ? wtdata :
                               regs[rdaddr_a];
 
     assign rddata_b =
         (rdaddr_b == 4'd0)  ? 16'h0000 :
         (rdaddr_b == 4'd14) ? {13'b0, nf, cf, zf} :
+        (wtenable && (wtaddr == rdaddr_b)) ? wtdata :
                               regs[rdaddr_b];
 
     // 24bitメモリの上位8bit
@@ -82,13 +85,14 @@ module regfile(
 
             //======================================================
             // 通常の16bitレジスタ書き込み
-            // r0・r14は禁止
+            // r0・r14・r15は別扱い
             // 24bit LOAD時のr13も禁止
             //======================================================
 
             if (wtenable &&
                 (wtaddr != 4'd0) &&
                 (wtaddr != 4'd14) &&
+                (wtaddr != 4'd15) &&
                 !(topenable && (wtaddr == 4'd13))) begin
 
                 regs[wtaddr] <= wtdata;
@@ -104,16 +108,15 @@ module regfile(
                 regs[13][7:0] <= topin;
 
             //======================================================
-            // PC
+            // PC (r15)
             // 明示的なPC書き込み(分岐)があればそのアドレスへ、
             // なければ通常は+1。
-            // ただしpc_hold時(=このサイクルは単一バスをデータ
-            // アクセスに使用しフェッチできなかった)はPCを保持し、
-            // 次サイクルで同じアドレスを再フェッチさせる。
+            // pc_hold時(=このサイクルは単一バスをデータ
+            // アクセスに使用しフェッチできなかった)はPCを保持。
             //======================================================
 
             if (wtenable && (wtaddr == 4'd15)) begin
-                // 分岐は既にregs[wtaddr]<=wtdataで書き込み済み (何もしない)
+                regs[15] <= wtdata;
             end else if (!pc_hold) begin
                 regs[15] <= regs[15] + 16'd1;
             end

@@ -96,16 +96,15 @@ module tb_cpu;
     //==========================================================================
 
     task send_uart_byte(input [7:0] data);
-
-        integer i;
-
+        reg [3:0] idx;
         begin
 
             uart_rx = 1'b0;
             #(CLKS_PER_BIT * 10);
 
-            for (i = 0; i < 8; i = i + 1) begin
-                uart_rx = data[i];
+            // データビット (LSBファースト)
+            for (idx = 0; idx < 8; idx = idx + 1) begin
+                uart_rx = data[idx];
                 #(CLKS_PER_BIT * 10);
             end
 
@@ -123,26 +122,20 @@ module tb_cpu;
     integer errors;
 
     initial begin
+        // 波形ダンプ (無効化)
+        // $dumpfile("tb_cpu.vcd");
+        // $dumpvars(0, tb_cpu);
 
-        clk     = 1'b0;
-        rst     = 1'b1;
-        uart_rx = 1'b1;
+        clk = 0;
+        rst = 1;
+        uart_rx = 1;
+    end
 
-        errors  = 0;
+    initial begin
 
-        $dumpfile("tb_cpu.vcd");
-        $dumpvars(0, tb_cpu);
-
-        //======================================================================
-        // 16K RAM initialization
-        //
-        // IMPORTANT:
-        // RAM is 0..16383 only.
-        //======================================================================
-
+        // メモリ初期化 (全ゼロ / NOP: 16Kワード)
         for (integer i = 0; i < 16384; i = i + 1) begin
-            u_soc.u_ram.memory[i] =
-                24'b100_00_0000_0000_0000_0000_000;
+            u_soc.u_ram.memory[i] = 24'b100_00_0000_0000_0000_0000_000; // NOP
         end
 
         //======================================================================
@@ -326,10 +319,15 @@ module tb_cpu;
         #20;
         rst = 1'b0;
 
-        // RX = 'Z'
+        // 外部から 0x5A ('Z') をUART RXに入力
+        #500;
+        $display("Starting send_uart_byte...");
         send_uart_byte(8'h5A);
+        $display("Finished send_uart_byte!");
 
-        #6000;
+        // ★ノイマン調停バブルを含めた全命令完了待機
+        #1500;
+        $display("Simulation finished normally, printing results...");
 
         //======================================================================
         // Results

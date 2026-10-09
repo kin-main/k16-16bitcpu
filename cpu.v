@@ -51,11 +51,11 @@ module cpu (
     //==========================================================================
 
     reg [23:0] if_id_ir;
+    reg [15:0] if_id_pc;
 
-    //==========================================================================
-    // Decoder
-    //==========================================================================
-
+    //==========================================================
+    // Stage 2: ID (デコード & レジスタファイル読み出し)
+    //==========================================================
     wire [2:0]  id_cond;
     wire [1:0]  id_op;
     wire [3:0]  id_rd;
@@ -116,6 +116,7 @@ module cpu (
 
     reg [15:0] id_ex_rddata_a;
     reg [15:0] id_ex_rddata_b;
+    reg [15:0] id_ex_pc;
 
     //==========================================================================
     // ALU / condition
@@ -425,10 +426,9 @@ module cpu (
 
             id_ex_rddata_a    <= 16'd0;
             id_ex_rddata_b    <= 16'd0;
-
-        end else if (load_stall || pc_write_now) begin
-
-            // Insert a bubble.
+            id_ex_pc          <= 16'd0;
+        end else if (load_stall) begin
+            // [Loadデータバブル]: Load実行時は次サイクルの書き戻し衝突を防ぐため EX に NOP を挿入
             id_ex_cond        <= 3'b100;
 
             id_ex_rd          <= 4'd0;
@@ -448,7 +448,7 @@ module cpu (
 
             id_ex_rddata_a    <= 16'd0;
             id_ex_rddata_b    <= 16'd0;
-
+            id_ex_pc          <= 16'd0;
         end else begin
 
             id_ex_cond        <= id_cond;
@@ -470,18 +470,108 @@ module cpu (
 
             id_ex_rddata_a    <= id_rddata_a;
             id_ex_rddata_b    <= id_rddata_b;
-
+            id_ex_pc          <= if_id_pc;
         end
     end
 
-    //==========================================================================
-    // LOAD tracking
-    //==========================================================================
+    //==========================================================
+    // Stage 3: EX (実行 / 条件判定 / ALU / メモリアクセス)
+    //==========================================================
+    wire zf, cf, nf;
+
+    // 条件判定
+    cond_check u_cond_check (
+        .cond   (id_ex_cond),
+        .zf     (zf),
+        .cf     (cf),
+        .nf     (nf),
+        .match  (ex_cond_match)
+    );
+
+    // データメモリへのアクセス発生判定
+    assign ex_is_mem_access = ex_cond_match && (id_ex_is_load || id_ex_is_store);
+
+    // --- フォワーディング (RAWハザード回避 & 特殊レジスタ直読みバイパス) ---
+    // 1) r0 ゼロレジスタバイパス
+    // 2) r14 最新フラグレジスタバイパス {13'b0, nf, cf, zf}
+    // 3) r15 現在実行中命令PCバイパス (id_ex_pc)
+    // 4) 1サイクル遅延でBRAM/MMIOから届いたLoadデータの直接バイパス (load_active_q)
+    // 5) r13[7:0]へ書き込まれるメモリ上位8bit(topin)の直接バイパス
+    // 6) 直前に書き込まれた汎用レジスタ値のバイパス (prev_wtenable)
+    wire [15:0] fwd_r13_a = load_active_q ? {id_ex_rddata_a[15:8], mem_rdata[23:16]} : id_ex_rddata_a;
+    wire [15:0] fwd_r13_b = load_active_q ? {id_ex_rddata_b[15:8], mem_rdata[23:16]} : id_ex_rddata_b;
+
+    wire [15:0] fwd_data_a = (id_ex_rs1 == 4'd0)  ? 16'h0000 :
+                             (id_ex_rs1 == 4'd14) ? {13'b0, nf, cf, zf} :
+                             (id_ex_rs1 == 4'd15) ? id_ex_pc :
+                             (wtenable && (wtaddr == id_ex_rs1) && (id_ex_rs1 != 4'd13)) ? wtdata :
+                             (load_active_q && (id_ex_rs1 == 4'd13)) ? fwd_r13_a :
+                             (prev_wtenable && (prev_wtaddr == id_ex_rs1)) ? prev_wtdata : id_ex_rddata_a;
+
+    wire [15:0] fwd_data_b = (id_ex_rs2 == 4'd0)  ? 16'h0000 :
+                             (id_ex_rs2 == 4'd14) ? {13'b0, nf, cf, zf} :
+                             (id_ex_rs2 == 4'd15) ? id_ex_pc :
+                             (wtenable && (wtaddr == id_ex_rs2) && (id_ex_rs2 != 4'd13)) ? wtdata :
+                             (load_active_q && (id_ex_rs2 == 4'd13)) ? fwd_r13_b :
+                             (prev_wtenable && (prev_wtaddr == id_ex_rs2)) ? prev_wtdata : id_ex_rddata_b;
+
+    wire [15:0] alu_in_a = fwd_data_a;
+    wire [15:0] alu_in_b = id_ex_alu_src_imm ? id_ex_imm : fwd_data_b;
+    wire [15:0] alu_result;
+
+    // ALU 接続
+    alu u_alu (
+        .clk     (clk),
+        .rst     (rst),
+        .flag_en (ex_cond_match && id_ex_flag_write),
+        .A       (alu_in_a),
+        .B       (alu_in_b),
+        .funct   (id_ex_alu_funct),
+        .result  (alu_result),
+        .Z       (zf),
+        .C       (cf),
+        .N       (nf)
+    );
+
+    //==========================================================
+    // IFステージ (命令フェッチ制御 & メモリバス調停)
+    //==========================================================
+    wire [15:0] pc;
+    wire [15:0] shared_addr = ex_is_mem_access ? alu_result : pc;
+    assign mem_addr = shared_addr;
+
+    // データアクセスの翌サイクル判定用レジスタ
+    reg data_access_q;
 
     always @(posedge clk or posedge rst) begin
 
         if (rst) begin
+            if_id_ir <= NOP_INST;
+            if_id_pc <= 16'd0;
+        end else if (wtenable && (wtaddr == 4'd15)) begin
+            // [分岐フラッシュ]: PC(r15)書き込み時、先読みした命令をNOP化
+            if_id_ir <= NOP_INST;
+            if_id_pc <= 16'd0;
+        end else if (load_stall) begin
+            // [Load時フェッチストール]: Load命令実行中は IF/ID 命令レジスタを保持
+            if_id_ir <= if_id_ir;
+            if_id_pc <= if_id_pc;
+        end else if (data_access_q) begin
+            // [バス調停バブル]: 前サイクルでデータアクセスを行ったため、
+            // 今 BRAM から返ってきたデータ(Loadデータ等)を無視して NOP 挿入
+            if_id_ir <= NOP_INST;
+            if_id_pc <= 16'd0;
+        end else begin
+            if_id_ir <= mem_rdata;
+            if_id_pc <= pc;
+        end
+    end
 
+    //==========================================================
+    // BRAM 1サイクル遅延吸収論理 (Load データの書き戻し同期)
+    //==========================================================
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
             load_active_q <= 1'b0;
             load_rd_q     <= 4'd0;
 
