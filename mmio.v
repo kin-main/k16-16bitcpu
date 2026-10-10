@@ -77,9 +77,14 @@ module mmio #(
             rdata    <= 24'd0;
             tx_hold  <= 8'd0;
             rx_clear <= 1'b0;
+            led      <= 8'd0;
         end else begin
             if (we && (addr == ADDR_UART_DATA) && !tx_busy) begin
                 tx_hold <= tx_data;
+            end
+
+            if (we && (addr == ADDR_LED_DATA)) begin
+                led <= wdata[7:0];
             end
 
             rx_clear <= 1'b0;
