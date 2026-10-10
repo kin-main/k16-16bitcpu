@@ -41,6 +41,7 @@ module mmio #(
 
     // UART 内部配線
     wire [7:0] tx_data  = wdata[7:0];
+    reg  [7:0] tx_hold;
     wire       tx_busy;
     wire       tx_done;
 
@@ -74,8 +75,13 @@ module mmio #(
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             rdata    <= 24'd0;
+            tx_hold  <= 8'd0;
             rx_clear <= 1'b0;
         end else begin
+            if (we && (addr == ADDR_UART_DATA) && !tx_busy) begin
+                tx_hold <= tx_data;
+            end
+
             rx_clear <= 1'b0;
             case (addr)
                 ADDR_UART_DATA: begin
