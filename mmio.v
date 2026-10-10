@@ -30,9 +30,12 @@ module mmio #(
     input  wire        uart_rx,   // UART 受信ピン
     output wire        uart_tx,   // UART 送信ピン
 
-    // LEDインターフェース
-    output reg  [7:0]  led        // LED出力ピン (0xFF02)
+    // LEDインターフェース (Tang Nano 9K の Active Low LED ピンに合わせ反転出力)
+    output wire [7:0]  led        // LED出力ピン (0xFF02)
 );
+
+    reg [7:0] led_reg;
+    assign led = ~led_reg; // Active Low 反転 (CPUから1書き込みで物理LED点灯)
 
     // MMIO レジスタアドレス定数
     localparam ADDR_UART_DATA   = 16'hFF00;
@@ -77,14 +80,14 @@ module mmio #(
             rdata    <= 24'd0;
             tx_hold  <= 8'd0;
             rx_clear <= 1'b0;
-            led      <= 8'd0;
+            led_reg  <= 8'd0;
         end else begin
             if (we && (addr == ADDR_UART_DATA) && !tx_busy) begin
                 tx_hold <= tx_data;
             end
 
             if (we && (addr == ADDR_LED_DATA)) begin
-                led <= wdata[7:0];
+                led_reg <= wdata[7:0];
             end
 
             rx_clear <= 1'b0;
@@ -101,7 +104,7 @@ module mmio #(
                 end
 
                 ADDR_LED_DATA: begin
-                    rdata <= {16'd0, led};
+                    rdata <= {16'd0, led_reg};
                 end
 
                 default: begin

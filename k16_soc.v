@@ -4,8 +4,8 @@
  *============================================================================*/
 
 module k16_soc #(
-    parameter CLKS_PER_BIT = 868,              // 1ビットあたりのクロックサイクル数
-    parameter INIT_FILE    = "firmware.hex"    // 起動時ロードするファームウェアHEX
+    parameter CLKS_PER_BIT = 868,                  // 1ビットあたりのクロックサイクル数
+    parameter INIT_FILE    = "firmware_led.hex"    // 起動時ロードするファームウェアHEX
 )(
     input  wire clk,
     input  wire rst,
