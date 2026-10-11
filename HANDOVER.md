@@ -10,19 +10,18 @@ Tang Nano 9K 上で `firmware_led.hex` を合成・書き込んだ際、LED が�
 
 | ファイル | 区分 | 変更概要 |
 | :--- | :--- | :--- |
-| [`mmio.v`](file:///c:/Users/nippa/k16-16bitcpu/mmio.v) | 修正 | Tang Nano 9K の Active Low LED に対応するため `assign led = ~led_reg;` を追加 |
-| [`k16_soc.v`](file:///c:/Users/nippa/k16-16bitcpu/k16_soc.v) | 修正 | デフォルトパラメータ `INIT_FILE` を `"firmware_led.hex"` に変更 |
-| [`tangnano9k_top.v`](file:///c:/Users/nippa/k16-16bitcpu/tangnano9k_top.v) | 新規 | Tang Nano 9K 専用トップモジュール（S1 ボタン極性反転 `rst = ~rst_n` 含む） |
-| [`tangnano9k.cst`](file:///c:/Users/nippa/k16-16bitcpu/tangnano9k.cst) | 新規 | Gowin EDA 用 Physical Constraint ピン配置制約ファイル |
-| [`firmware_led.hex`](file:///c:/Users/nippa/k16-16bitcpu/firmware_led.hex) | 再生成 | 最新の `build_led_blink.py` スクリプトでビルド |
+| [`mmio.v`](file:///c:/Users/nippa/k16-16bitcpu/mmio.v) | 修正 | ・Tang Nano 9K の Active Low LED に対応するため `assign led = ~led_reg;` を追加<br>・UART送信データを `tx_hold` に保持してから送信し、バス変化による文字破損を防止 |
+| [`tangnano9k_top.v`](file:///c:/Users/nippa/k16-16bitcpu/tangnano9k_top.v) | 修正 | ・Tang Nano 9K 専用トップモジュール（S1 ボタン極性反転 `rst = ~rst_n` 含む）<br>・初期化ファイルを総合テスト用の `"firmware.hex"` に設定 |
+| [`build_firmware.py`](file:///c:/Users/nippa/k16-16bitcpu/build_firmware.py) | 修正 | CALL擬似命令のリンクレジスタ加算値（オフセット）バグを修正（`r12 = r15 + 1`） |
+| [`firmware.hex`](file:///c:/Users/nippa/k16-16bitcpu/firmware.hex) | 再生成 | 修正版 `build_firmware.py` で再ビルド（全テストPASS） |
 
 ---
 
 ## 3. 次にやること（作業手順・動作確認ステップ）
 
 ### ステップ 1: Gowin EDA プロジェクト構成の確認
-1. Gowin EDA を起動し、以下の RTL ファイルを Design Files に追加：
-   - [`tangnano9k_top.v`](file:///c:/Users/nippa/k16-16bitcpu/tangnano9k_top.v) (Top Module に設定)
+1. Gowin EDA を起動し、以下の RTL ファイルが Design Files に含まれていることを確認：
+   - [`tangnano9k_top.v`](file:///c:/Users/nippa/k16-16bitcpu/tangnano9k_top.v) (Top Module)
    - [`k16_soc.v`](file:///c:/Users/nippa/k16-16bitcpu/k16_soc.v)
    - [`cpu.v`](file:///c:/Users/nippa/k16-16bitcpu/cpu.v)
    - [`mmio.v`](file:///c:/Users/nippa/k16-16bitcpu/mmio.v)
@@ -35,12 +34,22 @@ Tang Nano 9K 上で `firmware_led.hex` を合成・書き込んだ際、LED が�
 
 2. Physical Constraints に [`tangnano9k.cst`](file:///c:/Users/nippa/k16-16bitcpu/tangnano9k.cst) を指定。
 
-3. Gowin プロジェクトディレクトリ内に [`firmware_led.hex`](file:///c:/Users/nippa/k16-16bitcpu/firmware_led.hex) が配置されていることを確認。
+3. Gowin プロジェクトディレクトリ内に最新の [`firmware.hex`](file:///c:/Users/nippa/k16-16bitcpu/firmware.hex) をコピー配置。
 
 ### ステップ 2: 合成と書き込み
 1. Gowin EDA にて **Run All** (Synthesize & Place & Route) を実行。
-2. Gowin Programmer を開き、生成された Bitstream (`.fs` ファイル) を SRAM または Embedded Flash に書き込む。
+2. Gowin Programmer を開き、生成された Bitstream (`.fs` ファイル) を書き込む。
 
 ### ステップ 3: 動作検証
-1. **LED 点滅の確認**: Tang Nano 9K のオンボード LED (LED1〜LED6) が 0.5 秒ON / 0.5 秒OFF の周期でチカチカ点滅することを確認する。
-2. **UART 送信の確認**: シリアルターミナル（115200 bps, 8N1）を開き、0.5 秒ごとに `'H'` と `'L'` が交互に受信されることを確認する。
+1. **シリアルターミナル（115200 bps, 8N1）** を開く。
+2. ボード上の **S1 ボタン（リセットボタン）** を押す。
+3. 以下の通り文字化けなくテスト合格ログが表示されることを確認：
+   現在の短縮版ファームウェアでは、以下のログが表示されます：
+   ```text
+   K16 START
+   ALU OK
+   MEM OK
+   REG OK
+   ALL OK!
+   ```
+4. ターミナルから適当なキーを押すと、エコーバックされることを確認。

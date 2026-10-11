@@ -107,7 +107,8 @@ class Asm:
                 out.append(enc_i(cond, 15, 0, target, 4))
             elif kind == 'CALL_SAVE':
                 _, pc, lbl, _ = item
-                # ADDI r12, r15, 1  (pc+1がCALL_JUMPのアドレス、r15はpc+1を指す→r12=pc+2)
+                # id_ex_pc はフェッチ済み命令の次のアドレスを指すため、
+                # CALLの2命令（戻り番地保存とジャンプ）を越える値を保存する。
                 out.append(enc_i(0, 12, 15, 1, 4))
             elif kind == 'CALL_JUMP':
                 _, pc, lbl, _ = item
@@ -124,11 +125,17 @@ def build():
     a = Asm()
 
     # ---------------------------------------------------------
-    # 初期化: r9 = 0xFF00 (UART_DATA MMIO アドレス)
+    # 初期化: r9 = 0xFF00 (UART), r10 = 0xFF02 (LED)
     # ---------------------------------------------------------
+    def set_led(val):
+        a.li(8, val)
+        a.st(0, 8, 10, 0)
+
     a.label('_start')
     a.nand(0, 9, 0, 0)          # r9 = ~0 = 0xFFFF
     a.subi(0, 9, 9, 255)        # r9 = 0xFFFF - 255 = 0xFF00
+    a.addi(0, 10, 9, 2)         # r10 = 0xFF02 (LED_DATA)
+    set_led(1)                  # LED0: 起動完了・タイトル送信開始
 
     # スタートメッセージ
     a.li(1, 0, 'li r1, msg_start')          # 仮: 後で fix
@@ -139,16 +146,20 @@ def build():
     # Test 1: ALU & フラグ検証
     # ---------------------------------------------------------
     a.label('test_alu')
+    set_led(2)                  # LED1: タイトル送信完了・ALUテスト開始！
+
     # (1) ADD
     a.li(1, 10)
     a.li(2, 5)
     a.add(0, 3, 1, 2)           # r3 = 15
     a.subi(0, 4, 3, 15)         # r4 = 0, Z=1
     a.jump(COND['NE'], 'fail_alu')
+    set_led(3)                  # LED0+1: ADD成功
 
     # (2) SUB -> N=1
     a.sub(0, 5, 2, 1)           # r5 = 5-10 = -5, N=1, C=0
     a.jump(COND['PL'], 'fail_alu')  # N=0なら失敗
+    set_led(4)                  # LED2: SUB成功
 
     # (3) AND
     a.li(1, 0x0F)
@@ -185,11 +196,13 @@ def build():
     a.jump(COND['NC'], 'fail_alu')  # C=0なら失敗
 
     # ALU PASS
+    set_led(8)                  # LED3: ALU全PASS！
     a.li(1, 0)  # patch later
     a.label('_patch_msg_alu_pass'); a.call('print_str')
     a.jump(COND['AL'], 'test_mem')
 
     a.label('fail_alu')
+    set_led(0x3F)               # 全点灯: ALU FAIL!
     a.li(1, 0)  # patch later
     a.label('_patch_msg_alu_fail'); a.call('print_str')
     a.jump(COND['AL'], 'test_halt')
@@ -198,15 +211,17 @@ def build():
     # Test 2: Load/Store & 24-bit メモリ転送
     # ---------------------------------------------------------
     a.label('test_mem')
-    a.li(1, 200)                # ベースアドレス 200 (データ領域)
+    set_led(16)                 # LED4: MEMテスト開始
+    a.li(1, 200)
+    a.addi(0, 1, 1, 100)        # ベースアドレス 300 (プログラム領域と衝突しない安全領域)
     a.li(2, 0x5A)
     a.mov(13, 2)                # r13[7:0] = 0x5A
     a.li(3, 0x12)
 
-    # ST (加算) mem[200+5] = {0x5A, 0x0012}
+    # ST (加算) mem[300+5] = {0x5A, 0x0012}
     a.st(0, 3, 1, 5)
 
-    # ST (減算) mem[200-10] = {0x5A, 0x0077}
+    # ST (減算) mem[300-10] = {0x5A, 0x0077}
     a.li(4, 0x77)
     a.st(0, 4, 1, 10, sub=1)
 
@@ -214,7 +229,7 @@ def build():
     a.li(5, 0)
     a.li(13, 0)
 
-    # LD (加算) r5 = mem[200+5]
+    # LD (加算) r5 = mem[300+5]
     a.ld(0, 5, 1, 5)
     a.subi(0, 5, 5, 0x12)
     a.jump(COND['NE'], 'fail_mem')
@@ -223,17 +238,19 @@ def build():
     a.subi(0, 6, 13, 0x5A)
     a.jump(COND['NE'], 'fail_mem')
 
-    # LD (減算) r7 = mem[200-10]
+    # LD (減算) r7 = mem[300-10]
     a.ld(0, 7, 1, 10, sub=1)
     a.subi(0, 7, 7, 0x77)
     a.jump(COND['NE'], 'fail_mem')
 
     # MEM PASS
+    set_led(24)                 # LED3+4: MEM PASS!
     a.li(1, 0)
     a.label('_patch_msg_mem_pass'); a.call('print_str')
     a.jump(COND['AL'], 'test_reg')
 
     a.label('fail_mem')
+    set_led(0x3F)               # 全点灯: MEM FAIL!
     a.li(1, 0)
     a.label('_patch_msg_mem_fail'); a.call('print_str')
     a.jump(COND['AL'], 'test_halt')
@@ -242,6 +259,7 @@ def build():
     # Test 3: 特殊レジスタ & 条件実行
     # ---------------------------------------------------------
     a.label('test_reg')
+    set_led(32)                 # LED5: REGテスト開始
     # r0 書き込み無視
     a.addi(0, 0, 0, 99)
     a.add(0, 1, 0, 0)           # r1 = r0 = 0のはず
@@ -266,6 +284,7 @@ def build():
     a.jump(COND['NE'], 'fail_reg')
 
     # REG PASS
+    set_led(48)                 # LED4+5: REG PASS!
     a.li(1, 0)
     a.label('_patch_msg_reg_pass'); a.call('print_str')
 
@@ -280,6 +299,7 @@ def build():
     a.label('_patch_msg_echo'); a.call('print_str')
 
     a.label('echo_loop')
+    set_led(0x2A)               # 0b101010: 全テスト合格・エコー待機中！
     a.ld(0, 2, 9, 1)            # r2 = UART_STATUS
     a.andii(0, 3, 2, 2)         # bit1: rx_ready
     a.jump(COND['EQ'], 'echo_loop')  # rx_ready==0 なら待機
@@ -294,10 +314,12 @@ def build():
     a.jump(COND['AL'], 'echo_loop')
 
     a.label('fail_reg')
+    set_led(0x3F)               # 全点灯: REG FAIL!
     a.li(1, 0)
     a.label('_patch_msg_reg_fail'); a.call('print_str')
 
     a.label('test_halt')
+    set_led(0x3F)               # 全点灯: HALT
     a.li(1, 0)
     a.label('_patch_msg_halt'); a.call('print_str')
 
@@ -329,37 +351,37 @@ def build():
     a.ret()
 
     # ---------------------------------------------------------
-    # 文字列データ領域 (NULL終端)
+    # 文字列データ領域 (NULL終端) - 8bit即値(255)以内に収めるため短縮
     # ---------------------------------------------------------
     a.label('msg_start')
-    a.string('\r\nK16 CPU ISA+UART Test\r\n')
+    a.string('K16 START\r\n')
 
     a.label('msg_alu_pass')
-    a.string('[PASS] ALU\r\n')
+    a.string('ALU OK\r\n')
 
     a.label('msg_alu_fail')
-    a.string('[FAIL] ALU\r\n')
+    a.string('ALU NG\r\n')
 
     a.label('msg_mem_pass')
-    a.string('[PASS] MEM\r\n')
+    a.string('MEM OK\r\n')
 
     a.label('msg_mem_fail')
-    a.string('[FAIL] MEM\r\n')
+    a.string('MEM NG\r\n')
 
     a.label('msg_reg_pass')
-    a.string('[PASS] REG\r\n')
+    a.string('REG OK\r\n')
 
     a.label('msg_reg_fail')
-    a.string('[FAIL] REG\r\n')
+    a.string('REG NG\r\n')
 
     a.label('msg_all_pass')
-    a.string('>>> ALL PASS <<<\r\n')
+    a.string('ALL OK!\r\n')
 
     a.label('msg_echo')
-    a.string('Echo mode:\r\n')
+    a.string('ECHO:\r\n')
 
     a.label('msg_halt')
-    a.string('[HALT]\r\n')
+    a.string('HALT\r\n')
 
     # ---------------------------------------------------------
     # Pass 2: LI のアドレスパッチ

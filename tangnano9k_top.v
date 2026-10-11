@@ -27,7 +27,7 @@ module tangnano9k_top (
 
     k16_soc #(
         .CLKS_PER_BIT (234),
-        .INIT_FILE    ("firmware_led.hex")
+        .INIT_FILE    ("firmware.hex")
     ) u_soc (
         .clk     (clk_27mhz),
         .rst     (rst),
