@@ -191,9 +191,9 @@ def build():
     # (8) SHR & Carry
     a.li(1, 0x05)               # 0b0101
     a.shr(0, 2, 1)              # r2 = 2, C = 1
+    a.jump(COND['NC'], 'fail_alu')  # C=0なら失敗
     a.subi(0, 2, 2, 2)
     a.jump(COND['NE'], 'fail_alu')
-    a.jump(COND['NC'], 'fail_alu')  # C=0なら失敗
 
     # ALU PASS
     set_led(8)                  # LED3: ALU全PASS！
@@ -265,10 +265,11 @@ def build():
     a.add(0, 1, 0, 0)           # r1 = r0 = 0のはず
     a.jump(COND['NE'], 'fail_reg')
 
-    # r14 フラグ直読み: SUBI 0-1 -> N=1,C=0,Z=0 -> flags = {N,C,Z} = 4
+    # r14 フラグ直読み: RTLのSUBI 0-1 -> N=1,C=1,Z=0
+    # （17bit減算の最上位bitを「借りなし」フラグとして扱う）
     a.subi(0, 2, 0, 1)          # r2 = -1 (0xFFFF), N=1
-    a.add(0, 3, 14, 0)          # r3 = r14 = 4
-    a.subi(0, 3, 3, 4)
+    a.add(0, 3, 14, 0)          # r3 = r14 = 6 ({N,C,Z}=110)
+    a.subi(0, 3, 3, 6)
     a.jump(COND['NE'], 'fail_reg')
 
     # r14 書き込み無視

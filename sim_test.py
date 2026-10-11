@@ -46,8 +46,8 @@ class ALU:
             temp = A + B
             result = temp & 0xFFFF
         elif funct == 0b101: # SUB
-            # A + ~B + 1
-            temp = A + ((~B) & 0xFFFF) + 1
+            # RTLは17bit減算の最上位bitをCとして使用する。
+            temp = ((A & 0xFFFF) - (B & 0xFFFF)) & 0x1FFFF
             result = temp & 0xFFFF
         elif funct == 0b110: # ADC
             temp = A + B + self.C
