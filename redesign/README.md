@@ -65,6 +65,26 @@ CPUコアはMMIOの個別機能を知らず、`mem_ready` だけを見て待機�
 
 ## 検証
 
+アセンブラ:
+
+```powershell
+cd redesign
+python scripts\k16asm.py examples\hello.k16 -o build\hello.hex --depth 16384 --listing build\hello.lst
+```
+
+引数なしで起動すると、説明を表示したあと `input()` で1命令を受け取り、
+24-bit HEXを `print` します。
+
+```powershell
+python scripts\k16asm.py
+```
+
+命令名には条件サフィックスを付けられます（例: `ADD.eq`、`LD.ne`）。
+コメントは `;` または `#` から行末までです。`JMP` と `CALL` のラベルは、
+ISAの即値幅に合わせて0〜255ワードに制限しています。
+`CALL` は `ADDI r12, r15, 2` と `ADDI r15, r0, target` の2語へ展開されます。
+生成されたlistingには、アドレス・24-bit機械語・元ソースが出力されます。
+
 Pythonモデル:
 
 ```powershell

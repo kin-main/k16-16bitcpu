@@ -1,0 +1,17 @@
+; k16 assembler example: write 'K' to UART, then stop.
+.org 0
+
+    LI     r1, 0xFF       ; build 0xFF00 in r1
+    ADD    r1, r1, r1
+    ADD    r1, r1, r1
+    ADD    r1, r1, r1
+    ADD    r1, r1, r1
+    ADD    r1, r1, r1
+    ADD    r1, r1, r1
+    ADD    r1, r1, r1
+    ADD    r1, r1, r1
+    LI     r2, 0x4B       ; 'K'
+    ST     r2, [r1 + 0]   ; UART_TX at 0xFF00
+
+loop:
+    JMP    loop
