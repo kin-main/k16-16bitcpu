@@ -5,3 +5,8 @@ __pycache__/
 # Simulation outputs & trace files
 *.vcd
 *.out
+*.vvp
+
+# FPGA tool/build outputs
+build/
+redesign/build/*.vvp

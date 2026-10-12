@@ -46,7 +46,7 @@ module mmio (
     output wire        timer_irq,
     // UART
     input  wire        uart_rx,
-    output wire        uart_tx
+    output reg         uart_tx
 );
 
     //==========================================================================

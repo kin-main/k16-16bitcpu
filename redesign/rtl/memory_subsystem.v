@@ -8,7 +8,8 @@
 //==============================================================================
 
 module memory_subsystem #(
-    parameter RAM_ADDR_WIDTH = 14
+    parameter RAM_ADDR_WIDTH = 14,
+    parameter INIT_FILE      = "firmware.hex"
 )(
     input  wire        clk,
     input  wire        rst,
@@ -29,7 +30,10 @@ module memory_subsystem #(
     input  wire [23:0] mmio_rdata,
     input  wire        mmio_ready
 );
+    localparam [15:0] RAM_LIMIT = (16'h0001 << RAM_ADDR_WIDTH);
+
     wire is_mmio_addr = (mem_addr >= 16'hFF00);
+    wire is_ram_addr  = (mem_addr < RAM_LIMIT);
     wire is_mmio_access = is_mmio_addr && mem_data_req;
 
     //==========================================================
@@ -38,13 +42,14 @@ module memory_subsystem #(
     wire [23:0] ram_rdata;
 
     ram #(
-        .RAM_ADDR_WIDTH (RAM_ADDR_WIDTH)
+        .RAM_ADDR_WIDTH (RAM_ADDR_WIDTH),
+        .INIT_FILE      (INIT_FILE)
     ) u_ram (
         .clk   (clk),
         .addr  (mem_addr[RAM_ADDR_WIDTH-1:0]),
         .wdata (mem_wdata),
         .rdata (ram_rdata),
-        .we    (mem_we && !is_mmio_access)
+        .we    (mem_we && is_ram_addr && !is_mmio_access)
     );
 
     //==========================================================
@@ -62,14 +67,17 @@ module memory_subsystem #(
     // 現在の mem_rdata/mem_ready は前サイクルの要求に基づく。
     reg prev_is_data;
     reg prev_is_mmio;
+    reg prev_is_ram;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             prev_is_data <= 1'b0;
             prev_is_mmio <= 1'b0;
+            prev_is_ram  <= 1'b0;
         end else begin
             prev_is_data <= mem_data_req;
             prev_is_mmio <= is_mmio_addr && mem_data_req;
+            prev_is_ram  <= is_ram_addr;
         end
     end
 
@@ -80,15 +88,16 @@ module memory_subsystem #(
     // prev_is_data=1, prev_is_mmio=0: data LOAD from RAM → ram_rdata
     // prev_is_data=0, prev_is_mmio=1: fetch from MMIO → NOP
     // prev_is_data=0, prev_is_mmio=0: fetch from RAM → ram_rdata
-    assign mem_rdata = (prev_is_data && prev_is_mmio) ? mmio_rdata :
-                       (!prev_is_data && prev_is_mmio) ? 24'h800000 :  // NOP
-                       ram_rdata;
+    assign mem_rdata = prev_is_ram ? ram_rdata :
+                       (prev_is_data && prev_is_mmio) ? mmio_rdata :
+                       prev_is_data ? 24'h000000 :
+                       24'h800000;  // NOP for unmapped instruction fetch
 
     //==========================================================
     // Ready signal (based on PREVIOUS cycle's request)
     //==========================================================
-    assign mem_ready = (!prev_is_data) ? 1'b1 :        // Fetch (always ready)
-                       (!prev_is_mmio) ? 1'b1 :        // RAM data (always ready)
-                       mmio_ready;                     // MMIO data (variable)
+    assign mem_ready = prev_is_ram ? 1'b1 :
+                       (prev_is_data && prev_is_mmio) ? mmio_ready :
+                       1'b1;  // Unmapped accesses complete without side effects
 
 endmodule

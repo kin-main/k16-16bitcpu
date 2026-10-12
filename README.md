@@ -154,7 +154,7 @@ funkt	命令	動作説明	24-bitデータ転送
 
 6. ファイル構成（File Structure）
 
-k16-16bitcpu-1/
+.
 ├── README.md        # 本書（概要・仕様・構成）
 ├── SPEC.md          # 詳細設計仕様書
 ├── k16_soc.v        # CPU + RAM + MMIO(UART) 統合ノイマン型SoCトップ
@@ -168,7 +168,8 @@ k16-16bitcpu-1/
 ├── cond_check.v     # 条件判定サブデコーダ
 ├── tb_cpu.v         # Verilog テストベンチ
 ├── sim_test.py      # サイクル精度検証 Python スクリプト
-└── lisence.txt      # ライセンス（GPL v3）
+├── LICENSE          # ライセンス（GPL v3）
+└── redesign/        # memo準拠の同期BRAM対応実装
 
 ⸻
 
@@ -189,7 +190,7 @@ Verilogの論理と完全一致することを検証でき、以下の機能を�
 
 実行：
 
-python3 sim_test.py
+python sim_test.py
 
 検証結果例
 
@@ -220,7 +221,35 @@ python3 sim_test.py
 
 ⸻
 
-8. バグ修正履歴（2026-09）
+8. 開発ツリーの整理
+
+現在の既定実装はリポジトリ直下の `cpu.v` / `k16_soc.v` 系です。
+Tang Nano 9K向けのFPGA実装とUARTを含む、現行の主系として扱います。
+
+`redesign/` は初期の `author's memo` に忠実なISAを維持しながら、
+同期BRAM対応とハザード修正を行った主実装候補です。
+ルート直下のRTLは旧実装として比較用に残っています。
+設計基準と修正点は `redesign/docs/author_memo.md` を参照してください。
+
+主系のPython検証:
+
+```text
+python sim_test.py
+```
+
+再設計案のPython検証:
+
+```text
+cd redesign
+python scripts/sim_test.py
+```
+
+RTL検証には `iverilog` / `vvp` が必要です。生成される `.out`、`.vcd`、
+`.vvp`、`__pycache__` はリポジトリに追加しません。
+
+⸻
+
+9. 旧実装のバグ修正履歴（2026-09）
 
 初版のパイプライン制御に以下の不具合があり、修正しました。
 

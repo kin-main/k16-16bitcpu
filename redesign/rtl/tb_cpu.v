@@ -56,7 +56,8 @@ module tb_cpu;
 
     // ===== Memory Subsystem instance =====
     memory_subsystem #(
-        .RAM_ADDR_WIDTH (14)
+        .RAM_ADDR_WIDTH (14),
+        .INIT_FILE      ("")
     ) u_memsub (
         .clk        (clk),
         .rst        (rst),
