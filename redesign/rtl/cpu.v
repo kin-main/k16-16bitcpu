@@ -42,11 +42,7 @@ module cpu (
     reg [15:0] prefetch_addr;
     reg        prefetch_valid;
 
-    // Saved control signals for S_MEM_RESP
-    reg        saved_is_load;
-    reg        saved_is_store;
-    reg [3:0]  saved_rd;
-    reg        saved_cond_match;
+    // Saved data request information for S_MEM_RESP
     reg [15:0] saved_data_addr;
 
     // Latched writeback signals (computed in S_IDLE, used in S_MEM_RESP)
@@ -185,13 +181,6 @@ module cpu (
     wire [15:0] data_addr = alu_result;
     wire is_alu_r15 = cond_match && reg_write_req && (rd == 4'd15) && (state == S_IDLE);
 
-    // During S_MEM_RESP, use saved signals
-    wire resp_is_load      = saved_is_load;
-    wire resp_is_store     = saved_is_store;
-    wire resp_rd           = saved_rd;
-    wire resp_cond_match   = saved_cond_match;
-    wire resp_data_addr    = saved_data_addr;
-
     // LOAD r15 branch detection (latched)
     wire is_load_r15_branch = wb_is_load_r15_latch;
 
@@ -255,7 +244,7 @@ module cpu (
                 if (is_load_r15_branch && mem_ready)
                     mem_addr = mem_rdata[15:0];    // LOAD r15: fetch TARGET
                 else if (!mem_ready)
-                    mem_addr = resp_data_addr;     // MMIO wait: hold
+                    mem_addr = saved_data_addr;    // MMIO wait: hold
                 else
                     mem_addr = fetch_pc;           // Resume fetch
             end
@@ -281,10 +270,6 @@ module cpu (
             prev_wtaddr     <= 4'd0;
             prev_wtdata     <= 16'h0000;
             prev_wtenable   <= 1'b0;
-            saved_is_load   <= 1'b0;
-            saved_is_store  <= 1'b0;
-            saved_rd        <= 4'd0;
-            saved_cond_match<= 1'b0;
             saved_data_addr <= 16'h0000;
             wb_rd_latch     <= 4'd0;
             wb_load_en_latch<= 1'b0;
@@ -308,10 +293,6 @@ module cpu (
                         prefetch_addr   <= mem_addr_q;
                         prefetch_valid  <= 1'b1;
 
-                        saved_is_load    <= is_load;
-                        saved_is_store   <= is_store;
-                        saved_rd         <= rd;
-                        saved_cond_match <= cond_match;
                         saved_data_addr  <= data_addr;
 
                         ir              <= NOP_INST;

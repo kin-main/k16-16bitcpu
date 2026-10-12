@@ -1,80 +1,85 @@
-# k16 同期RAM対応 再設計案 (2段パイプライン+状態機械アプローチ)
+# k16 memo準拠実装（同期RAM対応）
 
-## 概要
+このディレクトリは、初期の `author's memo` にあるk16のISA・レジスタ構成・
+2段パイプラインを基準にした実装です。
 
-このディレクトリは、upstream の neumann ブランチ (3段パイプライン IF/ID/EX) とは
-**別アプローチ** での同期BRAM対応実装案です。
+初期スケッチの意図は維持しつつ、FPGAで実際に動かすために必要な同期RAMの
+1クロック遅延、Load応答待ち、分岐フラッシュ、RAWハザードをCPU側で処理します。
+これらはISAの変更ではなく、メモリ実装に起因する補正です。仕様の根拠と修正点は
+`docs/author_memo.md` にまとめています。
 
-- **upstream (neumann)**: 3段パイプライン (IF/ID/EX) + load_stall
-- **本提案 (redesign)**: 2段パイプライン + 状態機械 (S_IDLE/S_MEM_RESP/S_FLUSH1)
+## 固定するISA
 
-両者は同じ問題（同期RAMの1-cycle latency対応）に取り組んだ別解法。
-KISS原則の観点から、2段+状態機械でどこまでいけるかを検証したもの。
+- 16-bitデータパス、24-bit固定長命令
+- 16-bitアドレス
+- 条件実行 `AL / NE / NC / PL / NV / EQ / CS / MI`
+- 2段パイプライン
+- `r0` はゼロ、`r1`〜`r12` は汎用、`r13` はメモリ上位バイト、
+  `r14` はフラグ、`r15` はPC
+- ALU: `NAND / OR / AND / XOR / ADD / SUB / ADC / SHR`
+- Load/Store: 9-bit即値によるベース加算・減算
+- 24-bit転送: `{r13[7:0], 16-bit data}`
 
-## 比較
+命令ビット配置は初期メモのままです。
 
-| 項目 | upstream (neumann) | redesign (本提案) |
-|---|---|---|
-| パイプライン段数 | 3段 (IF/ID/EX) | 2段+状態機械 |
-| LOAD ペナルティ | load_stall 1サイクル | S_MEM_RESP 1サイクル |
-| 分岐フラッシュ | 2サイクル (3段のため) | 1サイクル (S_FLUSH1) |
-| ハザード制御 | フォワーディング多重 | prev_wtaddr シンプル |
-| ファイル構成 | cpu.v 単体 | cpu.v + memory_subsystem.v |
-| MMIO | mmio.v, k16_soc.v 別管理 | memory_subsystem.v で統一 |
-
-## 検証結果
-
-- iverilog RTL直接検証: 10/10 PASS
-- Pythonサイクルシミュレータ: 10/10 PASS
-- LEDチカチカ動作: PASS
-
-## ファイル構成
-
-```
-redesign/
-├── README.md                 # このファイル
-├── PULL_REQUEST.md           # PR本文
-├── docs/
-│   ├── memory_interface.md   # Memory Interface 契約書
-│   └── mmio_spec.md          # MMIO 仕様書
-├── rtl/
-│   ├── top.v                 # Gowin合成用トップ
-│   ├── cpu.v                 # CPU本体 (状態機械+パイプライン)
-│   ├── decoder.v             # 命令デコーダ
-│   ├── cond_check.v          # 条件判定
-│   ├── alu.v                 # ALU
-│   ├── regfile.v             # レジスタファイル (PC分離・bypass削除)
-│   ├── ram.v                 # 同期RAM
-│   ├── memory_subsystem.v    # RAM+MMIO ルーティング
-│   ├── mmio.v                # LED/BTN/UART/Timer/GPIO
-│   ├── tb_cpu.v              # ユニットテストベンチ (10ケース)
-│   └── tb_blink.v            # LEDチカチカ動作確認用
-├── scripts/
-│   ├── sim_test.py           # Python サイクル精度シミュレータ
-│   └── build_blink.py        # LEDチカチカファームウェア生成
-└── build/
-    ├── firmware.hex          # LEDチカチカファームウェア
-    └── firmware_sim.hex      # シミュレーション用 (短縮ループ)
+```text
+レジスタ間: cond(3) | op=00 | rd(4) | rs1(4) | rs2(4) | unused(4) | funct(3)
+即値演算:   cond(3) | op=01 | rd(4) | rs(4)  | imm(8)  | funct(3)
+Load/Store:  cond(3) | op=11 | rd(4) | base(4)| imm(9)  | funct(2)
 ```
 
-## 実行方法
+## 同期メモリインターフェース
 
-```bash
+CPUとメモリは単一ポートのインターフェースで接続します。
+
+```text
+CPU -> MEM: mem_data_req, mem_addr, mem_wdata, mem_we
+MEM -> CPU: mem_rdata, mem_ready
+```
+
+要求をサイクルNに出し、応答をサイクルN+1以降に受け取ります。
+`mem_ready=0` の間はCPUがデータ要求を保持します。
+
+内部状態は次の3つだけです。
+
+- `S_IDLE`: 通常命令の実行、フェッチ、データ要求の発行
+- `S_MEM_RESP`: LOAD/STOREの応答待ちとLOAD書き戻し
+- `S_FLUSH1`: 分岐後の古い命令を破棄
+
+## メモリ容量
+
+ISAのアドレス幅は16-bitですが、Tang Nano 9KのBRAM容量に合わせ、
+現在のプラットフォーム実装は `RAM_ADDR_WIDTH=14`（16Kワード）です。
+したがって、実機の有効RAM範囲は `0x0000〜0x3FFF` です。
+`0xFF00〜0xFFFF` はMMIOに予約しています。
+
+これは以前のドキュメントにあった「`0x0000〜0xFEFF` がRAM」という記述を
+実装に合わせて修正したものです。アドレスを折り返して別のRAMを参照する動作は
+許可しません。
+
+## MMIO
+
+MMIOはISA外のプラットフォーム拡張です。現在の実装ではUART、LED、ボタン、
+タイマ、GPIOを提供します。詳細は `docs/mmio_spec.md` を参照してください。
+CPUコアはMMIOの個別機能を知らず、`mem_ready` だけを見て待機します。
+
+## 検証
+
+Pythonモデル:
+
+```powershell
 cd redesign
-iverilog -g2012 -o build/tb_cpu.vvp \
-    rtl/tb_cpu.v rtl/cpu.v rtl/decoder.v rtl/cond_check.v rtl/alu.v \
-    rtl/regfile.v rtl/memory_subsystem.v rtl/ram.v
-vvp build/tb_cpu.vvp
+python scripts/sim_test.py
 ```
 
-## 比較検討ポイント
+RTL検証（`iverilog` / `vvp` が必要）:
 
-本提案を取り込むかどうかは、以下の観点で判断してください:
+```powershell
+cd redesign
+iverilog -g2012 -o build\tb_cpu.vvp `
+  rtl\tb_cpu.v rtl\cpu.v rtl\decoder.v rtl\cond_check.v rtl\alu.v `
+  rtl\regfile.v rtl\memory_subsystem.v rtl\ram.v
+vvp build\tb_cpu.vvp
+```
 
-1. **KISS原則**: 2段+状態機械の方が状態数が少なくシンプル
-2. **拡張性**: 3段の方が将来のキャッシュ/分岐予測等を実装しやすい
-3. **パフォーマンス**: 分岐ペナルティは2段の方が小さい (1 vs 2サイクル)
-4. **コード量**: 2段の方が少ない (cpu.v: 約425行 vs 約500行程度)
-5. **既存資産**: neumann は既にSoC統合済み、redesign はCPU単体
-
-**推奨**: redesign は「別案」として参考に留め、neumann を主軸開発継続。
+`build/` 内の生成物、`.vvp`、`.vcd`、`__pycache__` は追跡しません。
