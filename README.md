@@ -221,6 +221,28 @@ python sim_test.py
 
 ⸻
 
+## アセンブラ
+
+リポジトリ直下の `k16asm.py` から、k16のアセンブリソースを
+`firmware.hex` に変換できます。`redesign/scripts/k16asm.py` と同じ
+命令エンコーディングを使用します。
+
+```powershell
+python k16asm.py program.k16 -o firmware.hex --depth 16384 --listing build\program.lst
+```
+
+引数なしで起動すると、1命令ずつ入力できる対話モードになります。
+
+```powershell
+python k16asm.py
+```
+
+`LI`、`MOV`、`ADD`、`ADDI`、`LD`、`ST`、`JMP`、`CALL`、`RET` などに
+対応し、`ADD.eq` のような条件サフィックス、ラベル、`;` / `#` コメントを
+使用できます。
+
+⸻
+
 8. 開発ツリーの整理
 
 現在の既定実装はリポジトリ直下の `cpu.v` / `k16_soc.v` 系です。
