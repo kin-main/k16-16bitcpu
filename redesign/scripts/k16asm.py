@@ -26,6 +26,33 @@ REG_NAMES.update({"zero": 0, "flags": 14, "pc": 15})
 
 ALU_R = {"NAND", "OR", "AND", "XOR", "ADD", "SUB", "ADC", "SHR"}
 ALU_I = {"NANDI", "ORI", "ANDI", "XORI", "ADDI", "SUBI", "ADCI"}
+MNEMONICS = (
+    ("NOP", "No operation"),
+    ("LI", "Load immediate into register"),
+    ("MOV", "Copy register value"),
+    ("JMP", "Jump to target address"),
+    ("BRA", "Branch alias of JMP"),
+    ("CALL", "Call target and save return address"),
+    ("RET", "Return from subroutine"),
+    ("NAND", "Bitwise NAND"),
+    ("OR", "Bitwise OR"),
+    ("AND", "Bitwise AND"),
+    ("XOR", "Bitwise XOR"),
+    ("ADD", "Add registers"),
+    ("SUB", "Subtract registers"),
+    ("ADC", "Add with carry"),
+    ("SHR", "Logical shift right"),
+    ("NANDI", "Bitwise NAND with immediate"),
+    ("ORI", "Bitwise OR with immediate"),
+    ("ANDI", "Bitwise AND with immediate"),
+    ("XORI", "Bitwise XOR with immediate"),
+    ("ADDI", "Add immediate"),
+    ("SUBI", "Subtract immediate"),
+    ("ADCI", "Add immediate with carry"),
+    ("LD", "Load from memory [base +/- offset]"),
+    ("ST", "Store to memory [base +/- offset]"),
+)
+CONDITION_SUFFIXES = tuple(COND)
 
 
 @dataclass
@@ -273,10 +300,18 @@ def write_hex(words: dict[int, int], output: Path, depth: int | None) -> None:
             stream.write(f"{words.get(address, 0x800000):06X}\n")
 
 
+def print_mnemonics() -> None:
+    print("k16 ニーモニック一覧")
+    print("条件サフィックス:", ", ".join(f".{suffix.lower()}" for suffix in CONDITION_SUFFIXES))
+    for name, description in MNEMONICS:
+        print(f"  {name:<6} {description}")
+
+
 def interactive() -> int:
     print("k16 簡易アセンブラ")
     print("命令を1行入力すると、24-bit HEXを表示します。")
     print("例: ADD r1, r2, r3 / LI r1, 10 / LD r1, [r2 + 4]")
+    print("命令一覧: python k16asm.py --list-mnemonics")
     print("終了するには空行を入力してください。")
     print()
     while True:
@@ -300,7 +335,11 @@ def main() -> int:
     parser.add_argument("-o", "--output", type=Path, default=Path("firmware.hex"))
     parser.add_argument("--depth", type=int, help="pad output to this many words")
     parser.add_argument("--listing", type=Path, help="write address, word, and source listing")
+    parser.add_argument("--list-mnemonics", action="store_true", help="show supported mnemonics")
     args = parser.parse_args()
+    if args.list_mnemonics:
+        print_mnemonics()
+        return 0
     if args.source is None:
         return interactive()
     try:
