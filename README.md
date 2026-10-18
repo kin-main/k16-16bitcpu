@@ -237,6 +237,12 @@ python k16asm.py program.k16 -o firmware.hex --depth 16384 --listing build\progr
 python k16asm.py
 ```
 
+対応ニーモニックを一覧表示する場合:
+
+```powershell
+python k16asm.py --list-mnemonics
+```
+
 `LI`、`MOV`、`ADD`、`ADDI`、`LD`、`ST`、`JMP`、`CALL`、`RET` などに
 対応し、`ADD.eq` のような条件サフィックス、ラベル、`;` / `#` コメントを
 使用できます。
