@@ -26,6 +26,32 @@ REG_NAMES.update({"zero": 0, "flags": 14, "pc": 15})
 
 ALU_R = {"NAND", "OR", "AND", "XOR", "ADD", "SUB", "ADC", "SHR"}
 ALU_I = {"NANDI", "ORI", "ANDI", "XORI", "ADDI", "SUBI", "ADCI"}
+MNEMONICS = (
+    ("NOP", "no operation"),
+    ("LI", "load an 8-bit immediate"),
+    ("MOV", "copy a register"),
+    ("JMP / BRA", "jump to an 8-bit address"),
+    ("CALL", "call an 8-bit address"),
+    ("RET", "return through r12"),
+    ("NAND", "register NAND"),
+    ("OR", "register OR"),
+    ("AND", "register AND"),
+    ("XOR", "register XOR"),
+    ("ADD", "register addition"),
+    ("SUB", "register subtraction"),
+    ("ADC", "register addition with carry"),
+    ("SHR", "logical shift right by one"),
+    ("NANDI", "NAND with an 8-bit immediate"),
+    ("ORI", "OR with an 8-bit immediate"),
+    ("ANDI", "AND with an 8-bit immediate"),
+    ("XORI", "XOR with an 8-bit immediate"),
+    ("ADDI", "addition with an 8-bit immediate"),
+    ("SUBI", "subtraction with an 8-bit immediate"),
+    ("ADCI", "addition with carry and an 8-bit immediate"),
+    ("LD", "load from [base +/- offset]"),
+    ("ST", "store to [base +/- offset]"),
+)
+CONDITION_SUFFIXES = tuple(COND)
 
 
 @dataclass
@@ -277,6 +303,7 @@ def interactive() -> int:
     print("k16 簡易アセンブラ")
     print("命令を1行入力すると、24-bit HEXを表示します。")
     print("例: ADD r1, r2, r3 / LI r1, 10 / LD r1, [r2 + 4]")
+    print("命令一覧: python k16asm.py --list-mnemonics")
     print("終了するには空行を入力してください。")
     print()
     while True:
@@ -294,13 +321,29 @@ def interactive() -> int:
             print(f"エラー: {exc}")
 
 
+def print_mnemonics() -> None:
+    print("k16 ニーモニック一覧")
+    print("条件サフィックス: " + ", ".join(f".{suffix.lower()}" for suffix in CONDITION_SUFFIXES))
+    print()
+    for mnemonic, description in MNEMONICS:
+        print(f"{mnemonic:<12} {description}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, nargs="?")
     parser.add_argument("-o", "--output", type=Path, default=Path("firmware.hex"))
     parser.add_argument("--depth", type=int, help="pad output to this many words")
     parser.add_argument("--listing", type=Path, help="write address, word, and source listing")
+    parser.add_argument(
+        "--list-mnemonics",
+        action="store_true",
+        help="print supported mnemonics and condition suffixes",
+    )
     args = parser.parse_args()
+    if args.list_mnemonics:
+        print_mnemonics()
+        return 0
     if args.source is None:
         return interactive()
     try:

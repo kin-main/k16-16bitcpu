@@ -2,7 +2,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from k16asm import AssemblerError, assemble, assemble_line, encode_i, encode_r
+from k16asm import (
+    AssemblerError,
+    MNEMONICS,
+    assemble,
+    assemble_line,
+    encode_i,
+    encode_r,
+)
 
 
 class AssemblerTests(unittest.TestCase):
@@ -40,6 +47,10 @@ class AssemblerTests(unittest.TestCase):
 
     def test_interactive_single_line_assembly(self):
         self.assertEqual(assemble_line("LI r1, 10 ; explanation"), [encode_i(0, 1, 0, 10, 4)])
+
+    def test_mnemonic_list_covers_supported_instruction_groups(self):
+        names = {mnemonic for mnemonic, _ in MNEMONICS}
+        self.assertTrue({"NOP", "LI", "ADD", "ADDI", "LD", "ST"} <= names)
 
 
 if __name__ == "__main__":
