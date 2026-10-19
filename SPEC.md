@@ -152,6 +152,37 @@ PC（`r15`）への書き込みが成立した場合、次サイクルの `ir` �
 - Load: `rd = mem[base ± im]`, `r13[7:0] = mem[23:16]`
 - Store: `mem[base ± im] = {r13[7:0], rd}`
 
+### 5.3 フラグ更新仕様（Z/C/N）
+
+#### 5.3.1 更新対象と非更新対象
+- フラグ更新対象は **条件成立した ALU レジスタ演算（op=`2'b00`）および ALU 即値演算（op=`2'b01`）**のみ。
+- `decoder.v` の `flag_write = (is_alu_reg || is_alu_imm) && (rd != 4'd15)` と
+  `cpu.v` の `flag_en = ex_cond_match && id_ex_flag_write` により、次は更新されない。
+  - 条件不成立命令（`ex_cond_match=0`）
+  - Load/Store 命令（op=`2'b11`）
+  - `r15`（PC）宛て ALU演算（`rd==15`）
+
+#### 5.3.2 パイプライン更新タイミング
+- 命令は Stage 1 でデコードされ、`id_ex_*` にラッチされる。
+- 次サイクルの Stage 2 で `cond_check.v` が `{Z,C,N}` を使って実行条件を判定する。
+- 条件成立時、ALU（`alu.v`）の組み合わせ演算結果 `result` / `temp` を受けて、
+  **同じ実行サイクルの `posedge clk`** で `Z/C/N` が更新される。
+- 更新済みフラグは次命令の Stage 2 条件判定から参照される。
+
+#### 5.3.3 各フラグの定義
+- `Z = (result == 16'b0)`
+- `N = result[15]`
+- `C` の更新規則:
+  - `ADD` / `SUB` / `ADC`: `temp[16]`（`SUB` は Borrow なしを示す実装）
+  - `SHR`: シフトアウトされる `A[0]`
+  - `NAND` / `OR` / `AND` / `XOR`: 保持（更新しない）
+
+#### 5.3.4 リセットとフラグレジスタ参照
+- `alu.v` のリセットは `always @(posedge clk or posedge rst)` で実装され、`rst` アサート時に
+  `Z=0, C=0, N=0` へ非同期初期化される。
+- `r14` は読み出し専用フラグレジスタで、読み出し値は `{13'b0, N, C, Z}`。
+  書き込みは無視される。
+
 ---
 
 ## 6. モジュール構成とSoCトップ
