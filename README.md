@@ -6,7 +6,7 @@ KISS原則（Keep It Simple, Stupid） に基づき、必要最小限のシン�
 
 命令とデータを単一のアドレス空間・単一のメモリポートで共有する ノイマン型（von Neumann）アーキテクチャ を採用し、メモリ空間内に MMIO（UART I/O） を統合しています。
 
-一部AI使用
+RTL設計等でかなり積極的にaiを利用してます
 
 License
 
