@@ -10,7 +10,9 @@
  *   - uart_rx   : Pin 18
  *============================================================================*/
 
-module tangnano9k_top (
+module tangnano9k_top #(
+    parameter INIT_FILE = "firmware.hex" // 起動時ロードするファームウェアHEX (最上位トップで一元指定)
+)(
     input  wire       clk_27mhz, // 27MHz クロックピン
     input  wire       rst_n,     // S1 ボタン (Active Low リセット)
     input  wire       uart_rx,   // UART RX
@@ -27,8 +29,9 @@ module tangnano9k_top (
 
     k16_soc #(
         .CLKS_PER_BIT (234),
-        .INIT_FILE    ("firmware.hex")
+        .INIT_FILE    (INIT_FILE)
     ) u_soc (
+
         .clk     (clk_27mhz),
         .rst     (rst),
         .uart_rx (uart_rx),

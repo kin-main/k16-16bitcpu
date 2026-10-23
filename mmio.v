@@ -61,7 +61,7 @@ module mmio #(
     ) u_uart (
         .clk      (clk),
         .rst      (rst),
-        .tx_data  (tx_hold),
+        .tx_data  (tx_data),
         .tx_start (tx_start),
         .uart_tx  (uart_tx),
         .tx_busy  (tx_busy),

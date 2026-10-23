@@ -29,6 +29,13 @@ assemble = _impl.assemble
 assemble_line = _impl.assemble_line
 encode_i = _impl.encode_i
 encode_r = _impl.encode_r
+MNEMONICS = _impl.MNEMONICS
+ALU_R = _impl.ALU_R
+ALU_I = _impl.ALU_I
+COND = _impl.COND
+FUNCT = _impl.FUNCT
+write_hex = _impl.write_hex
+
 
 
 def main() -> int:

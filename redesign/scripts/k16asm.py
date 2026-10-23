@@ -30,7 +30,12 @@ MNEMONICS = (
     ("NOP", "no operation"),
     ("LI", "load an 8-bit immediate"),
     ("MOV", "copy a register"),
+    ("CMP", "compare two registers (SUB to r0)"),
+    ("CMPI", "compare register with 8-bit immediate"),
+    ("TEST", "test two registers (AND to r0)"),
+    ("TESTI", "test register with 8-bit immediate"),
     ("JMP / BRA", "jump to an 8-bit address"),
+
     ("CALL", "call an 8-bit address"),
     ("RET", "return through r12"),
     ("NAND", "register NAND"),
@@ -107,10 +112,10 @@ def checked(value: int, bits: int, what: str, item: Item) -> int:
 
 
 def parse_dest(token: str, item: Item) -> int:
-    register = parse_reg(token, item)
-    if register in {0, 14}:
-        fail(item, f"r{register} cannot be written")
-    return register
+    # r0 (zero) や r14 (flags) はハードウェア仕様上書き込みが無視（破棄）されるため、
+    # 比較専用（CMP/TEST相当）や結果を保持しない演算の宛先として指定可能
+    return parse_reg(token, item)
+
 
 
 def split_operands(text: str) -> list[str]:
@@ -225,27 +230,87 @@ def assemble_item(item: Item, labels: dict[str, int]) -> list[int]:
         target = parse_int(args[0], labels, item)
         checked(target, 8, "call target", item)
         return [
-            encode_i(condition, 12, 15, 2, FUNCT["ADD"]),
+            encode_i(condition, 12, 15, 1, FUNCT["ADD"]),
             encode_i(condition, 15, 0, target, FUNCT["ADD"]),
         ]
     if op == "RET":
         return [encode_r(condition, 15, 12, 0, FUNCT["ADD"])]
 
+    if op == "CMP":
+        # 比較疑似命令: SUB r0, rs1, rs2 (フラグのみ更新、結果はr0で破棄)
+        if len(args) != 2:
+            fail(item, "CMP requires rs1, rs2")
+        rs1 = parse_reg(args[0], item)
+        rs2 = parse_reg(args[1], item)
+        return [encode_r(condition, 0, rs1, rs2, FUNCT["SUB"])]
+
+    if op == "CMPI":
+        # 即値比較疑似命令: SUBI r0, rs, imm8 (フラグのみ更新、結果はr0で破棄)
+        if len(args) != 2:
+            fail(item, "CMPI requires rs, immediate")
+        rs = parse_reg(args[0], item)
+        imm = checked(parse_int(args[1], labels, item), 8, "immediate", item)
+        return [encode_i(condition, 0, rs, imm, FUNCT["SUB"])]
+
+    if op == "TEST":
+        # テスト疑似命令: AND r0, rs1, rs2 (フラグのみ更新、結果はr0で破棄)
+        if len(args) != 2:
+            fail(item, "TEST requires rs1, rs2")
+        rs1 = parse_reg(args[0], item)
+        rs2 = parse_reg(args[1], item)
+        return [encode_r(condition, 0, rs1, rs2, FUNCT["AND"])]
+
+    if op == "TESTI":
+        # 即値テスト疑似命令: ANDI r0, rs, imm8 (フラグのみ更新、結果はr0で破棄)
+        if len(args) != 2:
+            fail(item, "TESTI requires rs, immediate")
+        rs = parse_reg(args[0], item)
+        imm = checked(parse_int(args[1], labels, item), 8, "immediate", item)
+        return [encode_i(condition, 0, rs, imm, FUNCT["AND"])]
+
     if op in ALU_R:
-        expected = 2 if op == "SHR" else 3
-        if len(args) != expected:
-            fail(item, f"{op} requires {'rd, rs' if op == 'SHR' else 'rd, rs1, rs2'}")
-        rd = parse_dest(args[0], item)
-        rs1 = parse_reg(args[1], item)
-        rs2 = 0 if op == "SHR" else parse_reg(args[2], item)
-        return [encode_r(condition, rd, rs1, rs2, FUNCT[op])]
+        # SHR: 2オペランド (SHR rd, rs) または 1オペランド (SHR rd -> rd = rd >> 1)
+        if op == "SHR":
+            if len(args) == 1:
+                rd = parse_dest(args[0], item)
+                return [encode_r(condition, rd, rd, 0, FUNCT["SHR"])]
+            elif len(args) == 2:
+                rd = parse_dest(args[0], item)
+                rs = parse_reg(args[1], item)
+                return [encode_r(condition, rd, rs, 0, FUNCT["SHR"])]
+            else:
+                fail(item, f"{op} requires 'rd' or 'rd, rs'")
+
+        # その他のALU_R (ADD, SUB, AND, OR, etc.)
+        # 3オペランド形式: op rd, rs1, rs2
+        # 2オペランド形式: op rd, rs2 (rd = rd op rs2)
+        if len(args) == 3:
+            rd = parse_dest(args[0], item)
+            rs1 = parse_reg(args[1], item)
+            rs2 = parse_reg(args[2], item)
+            return [encode_r(condition, rd, rs1, rs2, FUNCT[op])]
+        elif len(args) == 2:
+            rd = parse_dest(args[0], item)
+            rs2 = parse_reg(args[1], item)
+            return [encode_r(condition, rd, rd, rs2, FUNCT[op])]
+        else:
+            fail(item, f"{op} requires 'rd, rs1, rs2' or 'rd, rs2'")
+
     if op in ALU_I:
         base_op = op[:-1]
-        if len(args) != 3:
-            fail(item, f"{op} requires rd, rs, immediate")
-        rd, rs = parse_dest(args[0], item), parse_reg(args[1], item)
-        imm = checked(parse_int(args[2], labels, item), 8, "immediate", item)
-        return [encode_i(condition, rd, rs, imm, FUNCT[base_op])]
+        # 3オペランド形式: op rd, rs, imm8
+        # 2オペランド形式: op rd, imm8 (rd = rd op imm8)
+        if len(args) == 3:
+            rd, rs = parse_dest(args[0], item), parse_reg(args[1], item)
+            imm = checked(parse_int(args[2], labels, item), 8, "immediate", item)
+            return [encode_i(condition, rd, rs, imm, FUNCT[base_op])]
+        elif len(args) == 2:
+            rd = parse_dest(args[0], item)
+            imm = checked(parse_int(args[1], labels, item), 8, "immediate", item)
+            return [encode_i(condition, rd, rd, imm, FUNCT[base_op])]
+        else:
+            fail(item, f"{op} requires 'rd, rs, immediate' or 'rd, immediate'")
+
     if op in {"LD", "ST"}:
         if len(args) != 2:
             fail(item, f"{op} requires register and memory operand")
@@ -340,10 +405,32 @@ def main() -> int:
         action="store_true",
         help="print supported mnemonics and condition suffixes",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="launch interactive Tkinter GUI assembler",
+    )
     args = parser.parse_args()
+    if args.gui:
+        try:
+            import k16_studio
+            k16_studio.main()
+            return 0
+        except ImportError:
+            try:
+                import sys
+                script_root = Path(__file__).resolve().parent.parent.parent
+                sys.path.insert(0, str(script_root))
+                import k16_studio
+                k16_studio.main()
+                return 0
+            except Exception as e:
+                parser.error(f"failed to start GUI: {e}")
+
     if args.list_mnemonics:
         print_mnemonics()
         return 0
+
     if args.source is None:
         return interactive()
     try:
