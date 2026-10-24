@@ -154,7 +154,7 @@ funkt	演算	動作説明	フラグ変化
 |---|---|
 | `Z` | `Z = (result == 0)` |
 | `N` | `N = result[15]` |
-| `C` | `ADD/SUB/ADC`: `temp[16]`（`SUB` は Borrow なしを示す実装） |
+| `C` | `ADD/SUB/ADC`: `temp[16]`（`SUB` は 17bit 減算の折り返しが入るため **`A < B` で `C=1`**＝ボロー発生、x86 流準拠） |
 | `C` | `SHR`: シフトアウトされる `A[0]` |
 | `C` | `NAND/OR/AND/XOR`: 保持（更新しない） |
 

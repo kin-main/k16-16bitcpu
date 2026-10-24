@@ -11,7 +11,7 @@ module alu (
 
     // フラグ
     // Z : Zero
-    // C : Carry / Borrowなし / SHRの押し出しbit
+    // C : Carry(ADD/ADC) / ボロー発生 A<B(SUB) / SHRの押し出しbit
     // N : Negative
     output reg         Z,
     output reg         C,

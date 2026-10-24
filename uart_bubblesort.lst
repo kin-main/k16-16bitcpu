@@ -1,0 +1,209 @@
+0000  050000  NAND    r10, r0, r0
+0001  0D57FD  SUBI    r10, 255
+0002  0D800C  LI      r11, 1
+0003  05DD84  ADD     r11, r11
+0004  05DD84  ADD     r11, r11
+0005  05DD84  ADD     r11, r11
+0006  05DD84  ADD     r11, r11
+0007  05DD84  ADD     r11, r11
+0008  05DD84  ADD     r11, r11
+0009  05DD84  ADD     r11, r11
+000A  05DD84  ADD     r11, r11
+000B  0C801C  LI      r9, 3
+000C  04CC84  ADD     r9, r9
+000D  04CC84  ADD     r9, r9
+000E  04CC84  ADD     r9, r9
+000F  04CC84  ADD     r9, r9
+0010  04CC84  ADD     r9, r9
+0011  04CC84  ADD     r9, r9
+0012  04CC84  ADD     r9, r9
+0013  04CC84  ADD     r9, r9
+0014  0C0004  LI      r8, 0
+0015  0882DC  LI      r1, 91
+0016  0E00C4  CALL    uart_tx
+0017  0F8654  CALL    uart_tx
+0018  088294  LI      r1, 82
+0019  0E00DC  CALL    uart_tx
+001A  0F8654  CALL    uart_tx
+001B  08822C  LI      r1, 69
+001C  0E00F4  CALL    uart_tx
+001D  0F8654  CALL    uart_tx
+001E  08820C  LI      r1, 65
+001F  0E010C  CALL    uart_tx
+0020  0F8654  CALL    uart_tx
+0021  088224  LI      r1, 68
+0022  0E0124  CALL    uart_tx
+0023  0F8654  CALL    uart_tx
+0024  0882CC  LI      r1, 89
+0025  0E013C  CALL    uart_tx
+0026  0F8654  CALL    uart_tx
+0027  0882EC  LI      r1, 93
+0028  0E0154  CALL    uart_tx
+0029  0F8654  CALL    uart_tx
+002A  088104  LI      r1, 32
+002B  0E016C  CALL    uart_tx
+002C  0F8654  CALL    uart_tx
+002D  088144  LI      r1, 40
+002E  0E0184  CALL    uart_tx
+002F  0F8654  CALL    uart_tx
+0030  0E0194  CALL    uart_rx
+0031  0F8604  CALL    uart_rx
+0032  0E01A4  CALL    uart_tx
+0033  0F8654  CALL    uart_tx
+0034  080945  CMPI    r1, 40
+0035  2F8184  JMP.ne  wait_open
+0036  0B8004  LI      r7, 0
+0037  0E01CC  CALL    uart_rx
+0038  0F8604  CALL    uart_rx
+0039  0E01DC  CALL    uart_tx
+003A  0F8654  CALL    uart_tx
+003B  080985  CMPI    r1, 48
+003C  4F81F4  JMP.nc  digit_upper
+003D  0F824C  JMP     delimiter
+003E  0809D5  CMPI    r1, 58
+003F  4F824C  JMP.nc  delimiter
+0040  088985  SUBI    r1, 48
+0041  013804  MOV     r2, r7
+0042  011104  ADD     r2, r2
+0043  03BB84  ADD     r7, r7
+0044  03BB84  ADD     r7, r7
+0045  03BB84  ADD     r7, r7
+0046  03B904  ADD     r7, r2
+0047  03B884  ADD     r7, r1
+0048  0F81BC  JMP     parse
+0049  080965  CMPI    r1, 44
+004A  AF8274  JMP.eq  store_value
+004B  08094D  CMPI    r1, 41
+004C  AF82A4  JMP.eq  finish_input
+004D  0F81BC  JMP     parse
+004E  01DC04  ADD     r3, r11, r8
+004F  0E8004  LI      r13, 0
+0050  1B9802  ST      r7, [r3 + 0]
+0051  0C400C  ADDI    r8, 1
+0052  0B8004  LI      r7, 0
+0053  0F81BC  JMP     parse
+0054  01DC04  ADD     r3, r11, r8
+0055  0E8004  LI      r13, 0
+0056  1B9802  ST      r7, [r3 + 0]
+0057  0C400C  ADDI    r8, 1
+0058  084015  CMPI    r8, 2
+0059  CF82FC  JMP.cs  print_result
+005A  0A0004  LI      r4, 0
+005B  02C004  MOV     r5, r8
+005C  0AA80D  SUBI    r5, 1
+005D  0E02FC  CALL    sort_array
+005E  0F83E4  CALL    sort_array
+005F  088144  LI      r1, 40
+0060  0E0314  CALL    uart_tx
+0061  0F8654  CALL    uart_tx
+0062  0B0004  LI      r6, 0
+0063  003405  CMP     r6, r8
+0064  4F8394  JMP.nc  print_done
+0065  083005  CMPI    r6, 0
+0066  AF8354  JMP.eq  print_number
+0067  088164  LI      r1, 44
+0068  0E0354  CALL    uart_tx
+0069  0F8654  CALL    uart_tx
+006A  01DB04  ADD     r3, r11, r6
+006B  189800  LD      r1, [r3 + 0]
+006C  800000  NOP
+006D  800000  NOP
+006E  0E0384  CALL    print_dec
+006F  0F84DC  CALL    print_dec
+0070  0B300C  ADDI    r6, 1
+0071  0F831C  JMP     print_loop
+0072  08814C  LI      r1, 41
+0073  0E03AC  CALL    uart_tx
+0074  0F8654  CALL    uart_tx
+0075  08806C  LI      r1, 13
+0076  0E03C4  CALL    uart_tx
+0077  0F8654  CALL    uart_tx
+0078  088054  LI      r1, 10
+0079  0E03DC  CALL    uart_tx
+007A  0F8654  CALL    uart_tx
+007B  0F80A4  JMP     restart
+007C  1E4802  ST      r12, [r9 + 0]
+007D  0CC80C  ADDI    r9, 1
+007E  0A0004  LI      r4, 0
+007F  034004  MOV     r6, r8
+0080  0B300D  SUBI    r6, 1
+0081  033205  SUB     r6, r4
+0082  0A8004  LI      r5, 0
+0083  002B05  CMP     r5, r6
+0084  4F849C  JMP.nc  sort_next_pass
+0085  01DA84  ADD     r3, r11, r5
+0086  189800  LD      r1, [r3 + 0]
+0087  800000  NOP
+0088  800000  NOP
+0089  191804  LD      r2, [r3 + 1]
+008A  800000  NOP
+008B  800000  NOP
+008C  001085  CMP     r2, r1
+008D  4F848C  JMP.nc  sort_no_swap
+008E  0E8004  LI      r13, 0
+008F  191802  ST      r2, [r3 + 0]
+0090  189806  ST      r1, [r3 + 1]
+0091  0AA80C  ADDI    r5, 1
+0092  0F841C  JMP     sort_inner
+0093  0A200C  ADDI    r4, 1
+0094  002405  CMP     r4, r8
+0095  4F84BC  JMP.nc  sort_done
+0096  0F83FC  JMP     sort_outer
+0097  0CC80D  SUBI    r9, 1
+0098  1E4800  LD      r12, [r9 + 0]
+0099  800000  NOP
+009A  07E004  RET
+009B  1E4802  ST      r12, [r9 + 0]
+009C  0CC80C  ADDI    r9, 1
+009D  080805  CMPI    r1, 0
+009E  2F851C  JMP.ne  decimal_digits
+009F  088184  LI      r1, 48
+00A0  0E0514  CALL    uart_tx
+00A1  0F8654  CALL    uart_tx
+00A2  0F85E4  JMP     decimal_return
+00A3  0E8004  LI      r13, 0
+00A4  0A0004  LI      r4, 0
+00A5  080805  CMPI    r1, 0
+00A6  AF859C  JMP.eq  emit_digits
+00A7  090004  LI      r2, 0
+00A8  080855  CMPI    r1, 10
+00A9  CF856C  JMP.cs  remainder_ready
+00AA  088855  SUBI    r1, 10
+00AB  09100C  ADDI    r2, 1
+00AC  0F8544  JMP     subtract_10
+00AD  088984  ADDI    r1, 48
+00AE  18C802  ST      r1, [r9 + 0]
+00AF  0CC80C  ADDI    r9, 1
+00B0  0A200C  ADDI    r4, 1
+00B1  009004  MOV     r1, r2
+00B2  0F852C  JMP     divide_by_10
+00B3  082005  CMPI    r4, 0
+00B4  AF85E4  JMP.eq  decimal_return
+00B5  0CC80D  SUBI    r9, 1
+00B6  18C800  LD      r1, [r9 + 0]
+00B7  800000  NOP
+00B8  0E05D4  CALL    uart_tx
+00B9  0F8654  CALL    uart_tx
+00BA  0A200D  SUBI    r4, 1
+00BB  0F859C  JMP     emit_digits
+00BC  0CC80D  SUBI    r9, 1
+00BD  1E4800  LD      r12, [r9 + 0]
+00BE  800000  NOP
+00BF  07E004  RET
+00C0  18D004  LD      r1, [r10 + 1]
+00C1  800000  NOP
+00C2  800000  NOP
+00C3  080812  TESTI   r1, 2
+00C4  AF8604  JMP.eq  rx_poll
+00C5  18D000  LD      r1, [r10 + 0]
+00C6  800000  NOP
+00C7  800000  NOP
+00C8  088FFA  ANDI    r1, 255
+00C9  07E004  RET
+00CA  195004  LD      r2, [r10 + 1]
+00CB  800000  NOP
+00CC  800000  NOP
+00CD  08100A  TESTI   r2, 1
+00CE  2F8654  JMP.ne  tx_poll
+00CF  18D002  ST      r1, [r10 + 0]
+00D0  07E004  RET

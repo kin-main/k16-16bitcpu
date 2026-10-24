@@ -27,7 +27,6 @@ REG_NAMES.update({"zero": 0, "flags": 14, "pc": 15})
 ALU_R = {"NAND", "OR", "AND", "XOR", "ADD", "SUB", "ADC", "SHR"}
 ALU_I = {"NANDI", "ORI", "ANDI", "XORI", "ADDI", "SUBI", "ADCI"}
 MNEMONICS = (
-<<<<<<< HEAD
     ("NOP", "no operation"),
     ("LI", "load an 8-bit immediate"),
     ("MOV", "copy a register"),
@@ -56,32 +55,6 @@ MNEMONICS = (
     ("ADCI", "addition with carry and an 8-bit immediate"),
     ("LD", "load from [base +/- offset]"),
     ("ST", "store to [base +/- offset]"),
-=======
-    ("NOP", "No operation"),
-    ("LI", "Load immediate into register"),
-    ("MOV", "Copy register value"),
-    ("JMP", "Jump to target address"),
-    ("BRA", "Branch alias of JMP"),
-    ("CALL", "Call target and save return address"),
-    ("RET", "Return from subroutine"),
-    ("NAND", "Bitwise NAND"),
-    ("OR", "Bitwise OR"),
-    ("AND", "Bitwise AND"),
-    ("XOR", "Bitwise XOR"),
-    ("ADD", "Add registers"),
-    ("SUB", "Subtract registers"),
-    ("ADC", "Add with carry"),
-    ("SHR", "Logical shift right"),
-    ("NANDI", "Bitwise NAND with immediate"),
-    ("ORI", "Bitwise OR with immediate"),
-    ("ANDI", "Bitwise AND with immediate"),
-    ("XORI", "Bitwise XOR with immediate"),
-    ("ADDI", "Add immediate"),
-    ("SUBI", "Subtract immediate"),
-    ("ADCI", "Add immediate with carry"),
-    ("LD", "Load from memory [base +/- offset]"),
-    ("ST", "Store to memory [base +/- offset]"),
->>>>>>> bf3719485c4b0f76c70152074a8499d4f52adacb
 )
 CONDITION_SUFFIXES = tuple(COND)
 
@@ -256,8 +229,12 @@ def assemble_item(item: Item, labels: dict[str, int]) -> list[int]:
     if op == "CALL":
         target = parse_int(args[0], labels, item)
         checked(target, 8, "call target", item)
+        # 戻り番地は CALL の2語の次 (A+2)。
+        # EX 段実行時の r15 ライブ値はパイプライン状態で A+1〜A+3 と揺れるため
+        #「r12 = r15 + k」は不安定。r0 基点の即値リンクで正しく A+2 を保存する。
+        link = checked(item.address + 2, 8, "call link", item)
         return [
-            encode_i(condition, 12, 15, 1, FUNCT["ADD"]),
+            encode_i(condition, 12, 0, link, FUNCT["ADD"]),
             encode_i(condition, 15, 0, target, FUNCT["ADD"]),
         ]
     if op == "RET":
@@ -434,7 +411,6 @@ def main() -> int:
     parser.add_argument("-o", "--output", type=Path, default=Path("firmware.hex"))
     parser.add_argument("--depth", type=int, help="pad output to this many words")
     parser.add_argument("--listing", type=Path, help="write address, word, and source listing")
-<<<<<<< HEAD
     parser.add_argument(
         "--list-mnemonics",
         action="store_true",
@@ -466,13 +442,6 @@ def main() -> int:
         print_mnemonics()
         return 0
 
-=======
-    parser.add_argument("--list-mnemonics", action="store_true", help="show supported mnemonics")
-    args = parser.parse_args()
-    if args.list_mnemonics:
-        print_mnemonics()
-        return 0
->>>>>>> bf3719485c4b0f76c70152074a8499d4f52adacb
     if args.source is None:
         return interactive()
     try:

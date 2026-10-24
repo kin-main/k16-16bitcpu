@@ -75,9 +75,10 @@ class Asm:
     # Load/Store
     def ld(self,c,rd,base,imm,sub=0): self._add(enc_ls(c,rd,base,imm,(0<<1)|sub))
     def st(self,c,rd,base,imm,sub=0): self._add(enc_ls(c,rd,base,imm,(1<<1)|sub))
-    # CALL展開: ADDI r12, r15, 1; ADDI r15, r0, target
+    # CALL展開: ADDI r12, r0, link; ADDI r15, r0, target
     def call(self, target_label):
-        # r12 = r15 + 1 (Stage2実行時 r15 は次命令アドレス → r12 = 次の次)
+        # 戻り番地 = CALLの2語の次。EX段でr15を読むとライブ値が
+        # パイプライン状態でA+1〜A+3と揺れるため、r15依存をやめて即値リンクを使う。
         idx = len(self._items)
         self._items.append(('CALL_SAVE', self.pc, target_label, ''))
         self.pc += 1
@@ -107,9 +108,10 @@ class Asm:
                 out.append(enc_i(cond, 15, 0, target, 4))
             elif kind == 'CALL_SAVE':
                 _, pc, lbl, _ = item
-                # id_ex_pc はフェッチ済み命令の次のアドレスを指すため、
-                # CALLの2命令（戻り番地保存とジャンプ）を越える値を保存する。
-                out.append(enc_i(0, 12, 15, 1, 4))
+                # 戻り番地は CALL の2語の次。EX段で r15 を読むとライブ値が
+                # パイプライン状態で A+1〜A+3 と揺れるため、r15 ではなく
+                # r0 基点の即値リンクで確定的に保存する。
+                out.append(enc_i(0, 12, 0, (pc + 2) & 0xFF, 4))
             elif kind == 'CALL_JUMP':
                 _, pc, lbl, _ = item
                 target = self.labels[lbl] if isinstance(lbl, str) else lbl

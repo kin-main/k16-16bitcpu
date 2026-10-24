@@ -11,7 +11,9 @@ module alu (
 
     // フラグ
     // Z : Zero
-    // C : Carry / Borrowなし / SHRの押し出しbit
+    // C : Carry(ADD/ADC) ・ Borrow発生A<B(SUB) ・ SHRの押し出しbit
+    //     SUB は 17bit 減算した値を A<B で折り返すため temp[16]/C は
+    //     「A<B で 1」(ボロー発生) を示す。x86流。
     // N : Negative
     output reg         Z,
     output reg         C,
