@@ -1,0 +1,378 @@
+; ============================================================
+; k16 firmware: PI-100  --  pi to 100 decimal digits
+;
+; Flow:
+;   boot  -> banner "[READY] PRESS s"
+;   wait  -> block until 's' (0x73) received over UART, echo it
+;   calc  -> Rabinowitz-Wagon spigot algorithm, n=340 terms
+;   out   -> "3." + 100 digits (streamed as computed), "DONE"
+;   then  -> back to waiting for 's' (repeatable)
+;
+; Algorithm (mixed radix pi = 2 + (1/3)(2 + (2/5)(2 + (3/7)...))):
+;   a[0..340] = 2
+;   repeat 101 times:
+;     carry = 0
+;     for j = 340 downto 1:
+;       x = 10*a[j] + carry          (max ~12670, fits 16 bit)
+;       q = x / (2j+1)               (q <= 18: repeated subtraction)
+;       a[j] = x mod (2j+1)
+;       carry = q * j                (max ~6030; shift-add multiply)
+;     hold = 10*a[0] + carry
+;     predigit = hold / 10 ; a[0] = hold mod 10
+;   predigits 0..10; a 9 is HELD (may become 10 by a later carry),
+;   a predigit of 10 means: increment every held digit, hold a 0.
+;
+; Memory map:
+;   0x0000-0x00FF   code (JMP/CALL targets must stay <= 0xFF)
+;   0x0100          string data (banner / done)
+;   0x0200-0x0354   spigot array a[0..340]
+;   0x0358-0x035F   held predigit buffer (8 words, max depth 3)
+;   0x0360          held count      (= held base + 8)
+;   0x0361          '.' flag        (= held base + 9)
+;
+; Register contract:
+;   r1  address scratch        r8  quotient / predigit p
+;   r2  value scratch          r9  temps (tx status, 2a, mul copy)
+;   r3  array base 0x0200      r10 UART MMIO base 0xFF00
+;   r4  j / buffer index       r11 outer iteration counter K
+;   r5  x / remainder / hold   r12 link register (CALL/RET)
+;   r6  carry / mul acc, then  r13 = 0 (24-bit memory high byte)
+;       held base 0x0358 in    r14 flags   r15 PC
+;       the predigit handler
+;   r7  divisor (2j+1 / 10)
+;
+; ALU immediates are 8-bit only: addresses above 255 live in
+; registers (r3 array base, r6 held base), LD/ST offsets (9-bit)
+; stay below 512.
+;
+; Flag convention (RTL): SUB/CMPI sets C=1 iff A<B (borrow).
+; LD results are used only after 2 following instructions (2 NOPs).
+; ============================================================
+
+.org 0x0000
+
+start:
+    LI      r13, 0             ; memory high byte = 0 for all stores
+    NAND    r10, r0, r0        ; r10 = 0xFFFF
+    SUBI    r10, 255           ; r10 = 0xFF00 (UART MMIO base)
+
+    ; ---- banner: "[READY] PRESS s\r\n" at 0x0100 ----
+    LI      r1, 64
+    ADD     r1, r1
+    ADD     r1, r1             ; r1 = 0x0100
+    CALL    print_str
+
+wait_s:
+    CALL    uart_rx            ; r1 = received byte (blocks)
+    CMPI    r1, 115            ; 's' = 0x73
+    JMP.ne  wait_s             ; ignore everything else
+
+    LI      r1, 115            ; echo the 's'
+    CALL    uart_tx
+    LI      r1, 13             ; CR
+    CALL    uart_tx
+    LI      r1, 10             ; LF
+    CALL    uart_tx
+
+    ; ---- r3 = 0x0200 array base ----
+    LI      r3, 2
+    ADD     r3, r3
+    ADD     r3, r3
+    ADD     r3, r3
+    ADD     r3, r3
+    ADD     r3, r3
+    ADD     r3, r3
+    ADD     r3, r3
+    ADD     r3, r3             ; r3 = 512
+
+    ; ---- a[0..340] = 2 (341 words) ----
+    LI      r2, 2
+    MOV     r1, r3
+    LI      r9, 171
+    ADD     r9, r9             ; 342
+    SUBI    r9, 1              ; 341
+init_arr:
+    ST      r2, [r1 + 0]
+    ADDI    r1, 1
+    SUBI    r9, 1
+    JMP.ne  init_arr
+
+    ; ---- held buffer: count = 0, '.' flag = 1 ----
+    LI      r2, 0
+    ST      r2, [r3 + 352]
+    LI      r2, 1
+    ST      r2, [r3 + 353]
+
+    LI      r11, 101           ; K = 101 output iterations
+
+; ------------------------------------------------------------
+; outer loop: one pass = one predigit of pi
+; ------------------------------------------------------------
+outer_digit:
+    LI      r6, 0              ; carry = 0
+    LI      r4, 170
+    ADD     r4, r4             ; j = 340
+
+inner_loop:
+    ADD     r1, r3, r4         ; r1 = &a[j]
+    LD      r2, [r1 + 0]       ; r2 = a[j]
+    NOP
+    NOP
+    MOV     r5, r2
+    ADD     r5, r5             ; 2a
+    MOV     r9, r5             ; save 2a
+    ADD     r5, r5             ; 4a
+    ADD     r5, r5             ; 8a
+    ADD     r5, r5, r9         ; 10a
+    ADD     r5, r5, r6         ; x = 10*a[j] + carry
+    MOV     r7, r4
+    ADD     r7, r7
+    ADDI    r7, 1              ; d = 2j+1
+    CALL    divmod             ; r8 = q, r5 = x mod d
+    ST      r5, [r1 + 0]       ; a[j] = remainder
+    ; carry = q * j  (shift-add multiply, r9 = shifting copy of j)
+    MOV     r9, r4
+    LI      r6, 0
+mul_loop:
+    CMPI    r8, 0
+    JMP.eq  mul_done
+    SHR     r8                 ; C = shifted-out bit of q
+    JMP.nc  mul_noadd
+    ADD     r6, r6, r9
+mul_noadd:
+    ADD     r9, r9             ; multiplicand <<= 1
+    JMP     mul_loop
+mul_done:
+    SUBI    r4, 1              ; --j
+    JMP.ne  inner_loop
+
+    ; ---- hold = 10*a[0] + carry ----
+    MOV     r1, r3             ; &a[0]
+    LD      r2, [r1 + 0]
+    NOP
+    NOP
+    MOV     r5, r2
+    ADD     r5, r5
+    MOV     r9, r5
+    ADD     r5, r5
+    ADD     r5, r5
+    ADD     r5, r5, r9         ; 10*a[0]
+    ADD     r5, r5, r6         ; hold
+    LI      r7, 10
+    CALL    divmod             ; r8 = predigit, r5 = hold mod 10
+    ST      r5, [r1 + 0]       ; a[0] = hold mod 10
+
+    ; ---- predigit handler (r8 = p in 0..10) ----
+    ; r6 = held system base 0x0358 (r6/carry is dead from here on)
+    LI      r6, 214
+    ADD     r6, r6
+    ADD     r6, r6             ; r6 = 856
+    CMPI    r8, 9
+    JMP.eq  dh_nine
+    CMPI    r8, 10
+    JMP.eq  dh_ten
+    ; p <= 8: release held digits, then hold p
+    CALL    flush_held
+    MOV     r1, r6             ; held buffer base
+    ST      r8, [r1 + 0]
+    LI      r2, 1
+    ST      r2, [r6 + 8]       ; count = 1
+    JMP     dh_end
+
+dh_nine:
+    LD      r5, [r6 + 8]       ; count
+    NOP
+    NOP
+    ADD     r1, r6, r5
+    LI      r2, 9
+    ST      r2, [r1 + 0]       ; held[count] = 9
+    ADDI    r5, 1
+    ST      r5, [r6 + 8]       ; count++
+    JMP     dh_end
+
+dh_ten:
+    ; increment every held digit (9 -> 0, else +1)
+    LD      r5, [r6 + 8]
+    NOP
+    NOP
+    LI      r4, 0
+dt_loop:
+    CMP     r4, r5             ; i < count ?
+    JMP.cs  dt_inc
+    JMP     dt_after
+dt_inc:
+    ADD     r1, r6, r4
+    LD      r2, [r1 + 0]
+    NOP
+    NOP
+    CMPI    r2, 9
+    JMP.ne  dt_not9
+    LI      r2, 0
+    ST      r2, [r1 + 0]
+    JMP     dt_next
+dt_not9:
+    ADDI    r2, 1
+    ST      r2, [r1 + 0]
+dt_next:
+    ADDI    r4, 1
+    JMP     dt_loop
+dt_after:
+    CALL    flush_held         ; release incremented held digits
+    MOV     r1, r6
+    LI      r2, 0
+    ST      r2, [r1 + 0]       ; hold the new 0
+    LI      r2, 1
+    ST      r2, [r6 + 8]
+
+dh_end:
+    SUBI    r11, 1
+    JMP.ne  outer_digit
+
+    ; ---- final flush (last held digit) + footer ----
+    LI      r6, 214
+    ADD     r6, r6
+    ADD     r6, r6             ; r6 = held base 0x0358
+    CALL    flush_held
+    LI      r1, 80
+    ADD     r1, r1
+    ADD     r1, r1             ; r1 = 0x0140 ("DONE\r\n\0")
+    CALL    print_str
+    JMP     wait_s
+
+; ------------------------------------------------------------
+; divmod: r8 = r5 / r7, r5 = r5 mod r7  (repeated subtraction;
+; quotient is at most 18 in this algorithm). Clobbers r5, r8.
+; ------------------------------------------------------------
+divmod:
+    LI      r8, 0
+dm_loop:
+    CMP     r5, r7             ; C=1 iff r5 < r7
+    JMP.cs  dm_done
+    SUB     r5, r5, r7
+    ADDI    r8, 1
+    JMP     dm_loop
+dm_done:
+    RET
+
+; ------------------------------------------------------------
+; uart_tx: send low byte of r1 (waits while tx_busy). Clobbers r2.
+; ------------------------------------------------------------
+uart_tx:
+ut_wait:
+    LD      r2, [r10 + 1]      ; UART_STATUS
+    NOP
+    NOP
+    TESTI   r2, 1              ; tx_busy
+    JMP.ne  ut_wait
+    ST      r1, [r10 + 0]      ; UART_DATA <- r1
+    RET
+
+; ------------------------------------------------------------
+; uart_rx: block until rx_ready, r1 = received byte. Clobbers r1, r2.
+; ------------------------------------------------------------
+uart_rx:
+ur_wait:
+    LD      r2, [r10 + 1]
+    NOP
+    NOP
+    TESTI   r2, 2              ; rx_ready
+    JMP.eq  ur_wait
+    LD      r1, [r10 + 0]      ; UART_DATA (clears rx_ready)
+    NOP
+    NOP
+    ANDI    r1, 255
+    RET
+
+; ------------------------------------------------------------
+; print_str: send zero-terminated string at r1. Clobbers r2, r5.
+; ------------------------------------------------------------
+print_str:
+ps_next:
+    LD      r2, [r1 + 0]
+    NOP
+    NOP
+    CMPI    r2, 0
+    JMP.eq  ps_done
+ps_wait:
+    LD      r5, [r10 + 1]
+    NOP
+    NOP
+    TESTI   r5, 1
+    JMP.ne  ps_wait
+    ST      r2, [r10 + 0]
+    ADDI    r1, 1
+    JMP     ps_next
+ps_done:
+    RET
+
+; ------------------------------------------------------------
+; flush_held: print held predigits as ASCII, then (first flush
+; of a run only) the '.' separator; held count = 0 afterwards.
+; Entry: r6 = held system base (0x0358).
+; Clobbers r1, r2, r4, r5, r9. Preserves r8.
+; ------------------------------------------------------------
+flush_held:
+    LD      r5, [r6 + 8]       ; count
+    NOP
+    NOP
+    LI      r4, 0              ; i = 0
+fh_loop:
+    CMP     r4, r5
+    JMP.cs  fh_emit
+    ; all held digits printed -> '.' flag check
+    ; (only when this flush actually printed a digit: the very
+    ;  first flush of a run has an empty held buffer and must
+    ;  not consume the '.' -- the '3' goes out one flush later)
+    CMPI    r5, 0
+    JMP.eq  fh_nodot
+    LD      r2, [r6 + 9]
+    NOP
+    NOP
+    CMPI    r2, 0
+    JMP.eq  fh_nodot
+    LI      r2, 46             ; '.'
+fh_tx2:
+    LD      r9, [r10 + 1]
+    NOP
+    NOP
+    TESTI   r9, 1
+    JMP.ne  fh_tx2
+    ST      r2, [r10 + 0]
+    LI      r2, 0
+    ST      r2, [r6 + 9]       ; clear '.' flag
+fh_nodot:
+    LI      r2, 0
+    ST      r2, [r6 + 8]       ; count = 0
+    RET
+fh_emit:
+    ADD     r1, r6, r4
+    LD      r2, [r1 + 0]
+    NOP
+    NOP
+    ADDI    r2, 48             ; '0' + digit
+fh_tx1:
+    LD      r9, [r10 + 1]
+    NOP
+    NOP
+    TESTI   r9, 1
+    JMP.ne  fh_tx1
+    ST      r2, [r10 + 0]
+    ADDI    r4, 1
+    JMP     fh_loop
+
+; ------------------------------------------------------------
+; string data
+; ------------------------------------------------------------
+.org 0x0100
+str_ready:
+    .ascii "[READY] PRESS s"
+    .word 13
+    .word 10
+    .word 0
+
+.org 0x0140
+str_done:
+    .ascii "DONE"
+    .word 13
+    .word 10
+    .word 0
